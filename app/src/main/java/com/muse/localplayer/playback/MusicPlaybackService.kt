@@ -20,8 +20,9 @@ class MusicPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        createPlaybackNotificationChannel()
-        setMediaNotificationProvider(MuseMediaNotificationProvider(this))
+        val channelId = playbackNotificationChannelId()
+        createPlaybackNotificationChannel(channelId)
+        setMediaNotificationProvider(MuseMediaNotificationProvider(this, channelId))
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -45,9 +46,11 @@ class MusicPlaybackService : MediaSessionService() {
             .build()
     }
 
-    private fun createPlaybackNotificationChannel() {
+    private fun playbackNotificationChannelId(): String = "$packageName.playback"
+
+    private fun createPlaybackNotificationChannel(channelId: String) {
         val channel = NotificationChannel(
-            NOTIFICATION_CHANNEL_ID,
+            channelId,
             getString(R.string.playback_notification_channel),
             NotificationManager.IMPORTANCE_LOW
         ).apply {
@@ -76,8 +79,4 @@ class MusicPlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    private companion object {
-        const val NOTIFICATION_ID = 1001
-        const val NOTIFICATION_CHANNEL_ID = "muse_playback"
-    }
 }

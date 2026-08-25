@@ -53,6 +53,14 @@ class UserPreferencesRepository(private val context: Context) {
         preferences[KEY_PLAYBACK_SPEED] ?: 1f
     }
 
+    val mixingPlaybackEnabled: Flow<Boolean> = preferences.map { preferences ->
+        preferences[KEY_MIXING_PLAYBACK] ?: false
+    }
+
+    val fadeTransitionsEnabled: Flow<Boolean> = preferences.map { preferences ->
+        preferences[KEY_FADE_TRANSITIONS] ?: true
+    }
+
     val playbackResumeState: Flow<PlaybackResumeState> = preferences.map { preferences ->
         PlaybackResumeState(
             trackId = preferences[KEY_RESUME_TRACK_ID],
@@ -93,6 +101,18 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveMixingPlaybackEnabled(enabled: Boolean) {
+        context.musePreferences.edit { preferences ->
+            preferences[KEY_MIXING_PLAYBACK] = enabled
+        }
+    }
+
+    suspend fun saveFadeTransitionsEnabled(enabled: Boolean) {
+        context.musePreferences.edit { preferences ->
+            preferences[KEY_FADE_TRANSITIONS] = enabled
+        }
+    }
+
     suspend fun savePlaybackResumeState(trackId: Long?, positionMs: Long) {
         context.musePreferences.edit { preferences ->
             if (trackId == null) {
@@ -111,6 +131,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val KEY_REPEAT_MODE = intPreferencesKey("repeat_mode")
         private val KEY_SHUFFLE = booleanPreferencesKey("shuffle_enabled")
         private val KEY_PLAYBACK_SPEED = floatPreferencesKey("playback_speed")
+        private val KEY_MIXING_PLAYBACK = booleanPreferencesKey("mixing_playback_enabled")
+        private val KEY_FADE_TRANSITIONS = booleanPreferencesKey("fade_transitions_enabled")
         private val KEY_RESUME_TRACK_ID = longPreferencesKey("resume_track_id")
         private val KEY_RESUME_POSITION_MS = longPreferencesKey("resume_position_ms")
     }

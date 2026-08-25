@@ -168,3 +168,21 @@ app/build/outputs/apk/release/app-release.apk
 [2] [Material 3 for Jetpack Compose](https://m3.material.io/develop/android/jetpack-compose)
 
 [3] [Android 应用签名与发布](https://developer.android.com/studio/publish/app-signing)
+
+## 一键共存安装
+
+Muse 可作为独立 APK 共存安装。使用 APK 共存工具修改并重新签名为不同包名后，Android 会将其视为新的应用；本地权限、DataStore 队列/收藏/播放记录、应用私有缓存、后台 `MediaSessionService` 和通知渠道均按该 APK 的运行时包名隔离。Muse 的媒体通知频道会动态使用 `<当前包名>.playback`，因此不同专题 APK 不会复用同一通知状态。
+
+> 共存工具修改 APK 后必须重新签名；改包名后的应用不能覆盖更新原包名应用，后续更新该共存专题时也必须保持同一个改后包名和签名证书。
+
+## ABI 下载包
+
+正式 Release 同时提供四个架构专用 APK 和一个通用 APK。普通安卓手机优先下载 `arm64-v8a`；不确定设备架构时下载通用包即可。
+
+| 发布资产 | 适用设备 |
+|---|---|
+| `arm64-v8a` | 绝大多数近年 Android 手机和平板。 |
+| `armeabi-v7a` | 较旧的 32 位 ARM Android 设备。 |
+| `x86_64` | 64 位 x86 Android 模拟器或少数 x86_64 设备。 |
+| `x86` | 32 位 x86 Android 模拟器或少数旧 x86 设备。 |
+| `universal` | 同时包含四种 ABI；无法确认架构时使用，文件略大。 |

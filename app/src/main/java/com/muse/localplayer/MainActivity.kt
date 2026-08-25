@@ -2,7 +2,10 @@ package com.muse.localplayer
 
 import android.Manifest
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
 import android.media.audiofx.AudioEffect
 import android.os.Build
 import android.os.Bundle
@@ -30,35 +33,45 @@ import com.muse.localplayer.ui.theme.MuseTheme
 
 class MainActivity : ComponentActivity() {
     private val playerViewModel: PlayerViewModel by viewModels()
+    private val permissionPreferences: SharedPreferences by lazy {
+        getSharedPreferences("muse_permission_prompt_state", MODE_PRIVATE)
+    }
+    private var audioPermissionGranted by mutableStateOf(false)
+    private var notificationPermissionGranted by mutableStateOf(false)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val audioPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        playerViewModel.onAudioPermissionResult(permissions[audioPermission] == true || hasAudioPermission())
+    ) {
+        audioPermissionGranted = hasAudioPermission()
+        notificationPermissionGranted = hasNotificationPermission()
+        playerViewModel.onAudioPermissionResult(audioPermissionGranted)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        audioPermissionGranted = hasAudioPermission()
+        notificationPermissionGranted = hasNotificationPermission()
         setContent {
             MuseTheme {
                 var showLaunchSplash by remember { mutableStateOf(true) }
                 Box(modifier = Modifier.fillMaxSize()) {
                     MuseMusicApp(
                         viewModel = playerViewModel,
-                        onRequestPermission = ::requestMediaPermissions,
+                        audioPermissionGranted = audioPermissionGranted,
+                        notificationPermissionGranted = notificationPermissionGranted,
+                        onRequestAudioPermission = ::requestAudioPermission,
+                        onRequestNotificationPermission = ::requestNotificationPermission,
                         onOpenAudioEffects = ::openAudioEffects
                     )
                     AnimatedVisibility(
                         visible = showLaunchSplash,
                         exit = fadeOut(animationSpec = tween(durationMillis = 380))
                     ) {
-                        MuseLaunchSplash(onFinished = { showLaunchSplash = false })
+                        MuseLaunchSplash(onFinished = {
+                            showLaunchSplash = false
+                            requestMissingPermissions()
+                        })
                     }
                 }
             }
@@ -66,27 +79,73 @@ class MainActivity : ComponentActivity() {
         if (hasAudioPermission()) playerViewModel.reloadLibrary()
     }
 
-    private fun requestMediaPermissions() {
-        if (hasAudioPermission()) {
-            // 通知授权不影响读取或播放设备音乐；避免用户每次手动扫描都被重复打扰。
-            playerViewModel.reloadLibrary()
-            return
-        }
-        val audioPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
+    /** Requests both optional system surfaces on first entry, then keeps each action available separately. */
+    private fun requestMissingPermissions() {
         val permissions = buildList {
-            add(audioPermission)
-            if (
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-            ) {
+            if (!hasAudioPermission() && !wasPrompted(audioPermission())) add(audioPermission())
+            if (!hasNotificationPermission() && !wasPrompted(Manifest.permission.POST_NOTIFICATIONS)) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-        permissionLauncher.launch(permissions.toTypedArray())
+        if (permissions.isEmpty()) {
+            playerViewModel.reloadLibrary()
+        } else {
+            markPrompted(permissions)
+            permissionLauncher.launch(permissions.toTypedArray())
+        }
+    }
+
+    private fun requestAudioPermission() {
+        if (hasAudioPermission()) {
+            audioPermissionGranted = true
+            playerViewModel.reloadLibrary()
+        } else if (wasPrompted(audioPermission()) && !shouldShowRequestPermissionRationale(audioPermission())) {
+            openApplicationSettings()
+        } else {
+            markPrompted(listOf(audioPermission()))
+            permissionLauncher.launch(arrayOf(audioPermission()))
+        }
+    }
+
+    private fun requestNotificationPermission() {
+        if (hasNotificationPermission()) {
+            notificationPermissionGranted = true
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (wasPrompted(Manifest.permission.POST_NOTIFICATIONS) && !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+                openApplicationSettings()
+            } else {
+                markPrompted(listOf(Manifest.permission.POST_NOTIFICATIONS))
+                permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        audioPermissionGranted = hasAudioPermission()
+        notificationPermissionGranted = hasNotificationPermission()
+        if (audioPermissionGranted) playerViewModel.onAudioPermissionResult(true)
+    }
+
+    private fun markPrompted(permissions: Collection<String>) {
+        permissionPreferences.edit().apply {
+            permissions.forEach { putBoolean("prompted_$it", true) }
+        }.apply()
+    }
+
+    private fun wasPrompted(permission: String): Boolean = permissionPreferences.getBoolean("prompted_$permission", false)
+
+    private fun openApplicationSettings() {
+        startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.fromParts("package", packageName, null))
+        )
+    }
+
+    private fun audioPermission(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
     private fun openAudioEffects() {
@@ -106,12 +165,10 @@ class MainActivity : ComponentActivity() {
         const val OUTPUT_MIX_AUDIO_SESSION = 0
     }
 
-    private fun hasAudioPermission(): Boolean {
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-    }
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, audioPermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasNotificationPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 }

@@ -6,6 +6,7 @@ import android.content.ComponentName
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -79,6 +80,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _playbackSpeed = MutableStateFlow(1f)
     val playbackSpeed = _playbackSpeed.asStateFlow()
 
+    private val _mixingPlaybackEnabled = MutableStateFlow(false)
+    val mixingPlaybackEnabled = _mixingPlaybackEnabled.asStateFlow()
+
+    private val _fadeTransitionsEnabled = MutableStateFlow(true)
+    val fadeTransitionsEnabled = _fadeTransitionsEnabled.asStateFlow()
+
     private val _controllerReady = MutableStateFlow(false)
     val controllerReady = _controllerReady.asStateFlow()
 
@@ -87,6 +94,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private var controller: MediaController? = null
     private var progressJob: Job? = null
+    private var fadeJob: Job? = null
     private var libraryScanJob: Job? = null
     private var mediaStoreObserverJob: Job? = null
     private var pendingTrack: Track? = null
@@ -163,6 +171,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 connectedController.repeatMode = _repeatMode.value
                 connectedController.shuffleModeEnabled = _shuffleEnabled.value
                 connectedController.playbackParameters = PlaybackParameters(_playbackSpeed.value)
+                applyAudioFocusPolicy(connectedController)
                 syncCurrentTrack(connectedController.currentMediaItem)
                 syncQueueFromController(persist = false)
                 restoreSavedQueueIfPossible()
@@ -196,6 +205,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             preferencesRepository.playbackSpeed.collect { savedSpeed ->
                 _playbackSpeed.value = savedSpeed
                 controller?.playbackParameters = PlaybackParameters(savedSpeed)
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.mixingPlaybackEnabled.collect { enabled ->
+                _mixingPlaybackEnabled.value = enabled
+                controller?.let(::applyAudioFocusPolicy)
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.fadeTransitionsEnabled.collect { enabled ->
+                _fadeTransitionsEnabled.value = enabled
             }
         }
         viewModelScope.launch {
@@ -305,7 +325,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             activeController.prepare()
             updateQueueState(queueToPlay)
         }
+        val shouldFadeIn = !activeController.isPlaying && _fadeTransitionsEnabled.value
+        if (shouldFadeIn) activeController.volume = 0f
         activeController.play()
+        if (shouldFadeIn) fadeIn(activeController)
         _currentTrack.value = track
         _isPlaying.value = true
     }
@@ -314,7 +337,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val activeController = controller ?: return
         if (index !in _queue.value.indices) return
         activeController.seekToDefaultPosition(index)
+        val shouldFadeIn = !activeController.isPlaying && _fadeTransitionsEnabled.value
+        if (shouldFadeIn) activeController.volume = 0f
         activeController.play()
+        if (shouldFadeIn) fadeIn(activeController)
     }
 
     fun playAlbum(albumTracks: List<Track>, startTrack: Track? = albumTracks.firstOrNull()) {
@@ -347,7 +373,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         activeController.setMediaItems(cleanedQueue.map { it.toMediaItem() }, startIndex, 0L)
         activeController.prepare()
         updateQueueState(cleanedQueue)
-        if (shouldPlay) activeController.play()
+        if (shouldPlay) {
+            activeController.volume = if (_fadeTransitionsEnabled.value) 0f else DEFAULT_PLAYER_VOLUME
+            activeController.play()
+            fadeIn(activeController)
+        }
     }
 
     fun addToQueue(track: Track) {
@@ -407,20 +437,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun togglePlayback() {
         controller?.let { activeController ->
-            if (activeController.isPlaying) activeController.pause() else activeController.play()
+            if (activeController.isPlaying) {
+                fadeOutThen(activeController) { activeController.pause() }
+            } else {
+                activeController.volume = if (_fadeTransitionsEnabled.value) 0f else DEFAULT_PLAYER_VOLUME
+                activeController.play()
+                fadeIn(activeController)
+            }
         }
     }
 
     fun skipNext() {
-        controller?.seekToNextMediaItem()
+        controller?.let { activeController ->
+            fadeOutThen(activeController) {
+                activeController.seekToNextMediaItem()
+                fadeIn(activeController)
+            }
+        }
     }
 
     fun skipPrevious() {
         controller?.let { activeController ->
-            if (activeController.currentPosition > PREVIOUS_RESTART_THRESHOLD_MS) {
-                activeController.seekTo(0L)
-            } else {
-                activeController.seekToPreviousMediaItem()
+            fadeOutThen(activeController) {
+                if (activeController.currentPosition > PREVIOUS_RESTART_THRESHOLD_MS) {
+                    activeController.seekTo(0L)
+                } else {
+                    activeController.seekToPreviousMediaItem()
+                }
+                fadeIn(activeController)
             }
         }
     }
@@ -462,11 +506,66 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { preferencesRepository.savePlaybackSpeed(safeSpeed) }
     }
 
+    fun setMixingPlaybackEnabled(enabled: Boolean) {
+        _mixingPlaybackEnabled.value = enabled
+        controller?.let(::applyAudioFocusPolicy)
+        viewModelScope.launch { preferencesRepository.saveMixingPlaybackEnabled(enabled) }
+    }
+
+    fun setFadeTransitionsEnabled(enabled: Boolean) {
+        _fadeTransitionsEnabled.value = enabled
+        if (!enabled) {
+            fadeJob?.cancel()
+            fadeJob = null
+            controller?.volume = DEFAULT_PLAYER_VOLUME
+        }
+        viewModelScope.launch { preferencesRepository.saveFadeTransitionsEnabled(enabled) }
+    }
+
     fun toggleFavorite(track: Track) {
         viewModelScope.launch { preferencesRepository.toggleFavorite(track.id) }
     }
 
     fun isFavorite(track: Track): Boolean = track.id in _favoriteIds.value
+
+    private fun applyAudioFocusPolicy(activeController: MediaController) {
+        activeController.setAudioAttributes(MUSIC_AUDIO_ATTRIBUTES, !_mixingPlaybackEnabled.value)
+    }
+
+    private fun fadeOutThen(activeController: MediaController, action: () -> Unit) {
+        if (!_fadeTransitionsEnabled.value || !activeController.isPlaying) {
+            action()
+            return
+        }
+        fadeJob?.cancel()
+        fadeJob = viewModelScope.launch {
+            animateVolume(activeController, activeController.volume, 0f)
+            fadeJob = null
+            action()
+        }
+    }
+
+    private fun fadeIn(activeController: MediaController) {
+        if (!_fadeTransitionsEnabled.value) {
+            activeController.volume = DEFAULT_PLAYER_VOLUME
+            return
+        }
+        fadeJob?.cancel()
+        fadeJob = viewModelScope.launch {
+            delay(80L)
+            animateVolume(activeController, activeController.volume, DEFAULT_PLAYER_VOLUME)
+        }
+    }
+
+    private suspend fun animateVolume(activeController: MediaController, from: Float, to: Float) {
+        val start = from.coerceIn(0f, DEFAULT_PLAYER_VOLUME)
+        repeat(FADE_STEPS) { step ->
+            val progress = (step + 1).toFloat() / FADE_STEPS
+            activeController.volume = start + (to - start) * progress
+            delay(FADE_STEP_DELAY_MS)
+        }
+        activeController.volume = to
+    }
 
     private fun restoreSavedQueueIfPossible() {
         val activeController = controller ?: return
@@ -593,6 +692,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         progressJob?.cancel()
         progressJob = null
+        fadeJob?.cancel()
+        fadeJob = null
         libraryScanJob?.cancel()
         stopMediaStoreObservation()
         controller?.removeListener(playerListener)
@@ -621,6 +722,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val RESUME_PERSIST_INTERVAL_MS = 10_000L
         const val PREVIOUS_RESTART_THRESHOLD_MS = 5_000L
         const val PROGRESS_UPDATE_INTERVAL_MS = 500L
+        val MUSIC_AUDIO_ATTRIBUTES: AudioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
+        const val DEFAULT_PLAYER_VOLUME = 1f
+        const val FADE_STEPS = 8
+        const val FADE_STEP_DELAY_MS = 35L
         const val MIN_VALID_DURATION_MS = 1_000L
     }
 }

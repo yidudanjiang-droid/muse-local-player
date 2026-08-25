@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -124,7 +125,10 @@ import kotlin.math.absoluteValue
 @Composable
 fun MuseMusicApp(
     viewModel: PlayerViewModel,
-    onRequestPermission: () -> Unit,
+    audioPermissionGranted: Boolean,
+    notificationPermissionGranted: Boolean,
+    onRequestAudioPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onOpenAudioEffects: () -> Unit
 ) {
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
@@ -138,6 +142,8 @@ fun MuseMusicApp(
     val repeatMode by viewModel.repeatMode.collectAsStateWithLifecycle()
     val shuffleEnabled by viewModel.shuffleEnabled.collectAsStateWithLifecycle()
     val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
+    val mixingPlaybackEnabled by viewModel.mixingPlaybackEnabled.collectAsStateWithLifecycle()
+    val fadeTransitionsEnabled by viewModel.fadeTransitionsEnabled.collectAsStateWithLifecycle()
     val playerMessage by viewModel.playerMessage.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
@@ -226,7 +232,7 @@ fun MuseMusicApp(
                     label = { Text("重新扫描设备") },
                     selected = false,
                     onClick = {
-                        onRequestPermission()
+                        onRequestAudioPermission()
                         scope.launch { drawerState.close() }
                     },
                     icon = { Icon(Icons.Default.Folder, null) },
@@ -330,7 +336,10 @@ fun MuseMusicApp(
                     favoriteIds = favoriteIds,
                     libraryUiState = libraryUiState,
                     contentPadding = paddingValues,
-                    onRequestPermission = onRequestPermission,
+                    audioPermissionGranted = audioPermissionGranted,
+                    notificationPermissionGranted = notificationPermissionGranted,
+                    onRequestPermission = onRequestAudioPermission,
+                    onRequestNotificationPermission = onRequestNotificationPermission,
                     onRescan = viewModel::reloadLibrary,
                     onPlay = viewModel::play,
                     onPlayAlbum = viewModel::playAlbum,
@@ -360,7 +369,10 @@ fun MuseMusicApp(
                             favoriteIds = favoriteIds,
                             libraryUiState = libraryUiState,
                             contentPadding = PaddingValues(),
-                            onRequestPermission = onRequestPermission,
+                            audioPermissionGranted = audioPermissionGranted,
+                            notificationPermissionGranted = notificationPermissionGranted,
+                            onRequestPermission = onRequestAudioPermission,
+                            onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
                             onPlay = viewModel::play,
                             onPlayAlbum = viewModel::playAlbum,
@@ -409,6 +421,8 @@ fun MuseMusicApp(
             repeatMode = repeatMode,
             shuffleEnabled = shuffleEnabled,
             playbackSpeed = playbackSpeed,
+            mixingPlaybackEnabled = mixingPlaybackEnabled,
+            fadeTransitionsEnabled = fadeTransitionsEnabled,
             isFavorite = currentTrack!!.id in favoriteIds,
             onDismiss = { playerOpen = false },
             onToggle = viewModel::togglePlayback,
@@ -419,6 +433,8 @@ fun MuseMusicApp(
                 viewModel.setPlaybackStrategy(strategy.repeatMode, strategy.shuffleEnabled)
             },
             onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
+            onSetMixingPlayback = viewModel::setMixingPlaybackEnabled,
+            onSetFadeTransitions = viewModel::setFadeTransitionsEnabled,
             onToggleFavorite = { viewModel.toggleFavorite(currentTrack!!) },
             onOpenQueue = {
                 playerOpen = false
@@ -503,7 +519,10 @@ internal fun HomeScreen(
     featuredMetadata: FeaturedPackMetadata,
     libraryUiState: LibraryUiState,
     contentPadding: PaddingValues,
+    audioPermissionGranted: Boolean,
+    notificationPermissionGranted: Boolean,
     onRequestPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
     onSongsClick: () -> Unit,
@@ -547,6 +566,14 @@ internal fun HomeScreen(
             items(featuredTracks, key = { it.id }) { track ->
                 TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
             }
+        }
+        item {
+            PermissionStatusCard(
+                audioPermissionGranted = audioPermissionGranted,
+                notificationPermissionGranted = notificationPermissionGranted,
+                onRequestAudioPermission = onRequestPermission,
+                onRequestNotificationPermission = onRequestNotificationPermission
+            )
         }
         item { SectionHeader("设备音乐", "打开资料库", onSongsClick) }
         item { LibraryStatusCard(libraryUiState = libraryUiState, onRequestPermission = onRequestPermission, onRescan = onRescan) }
@@ -612,6 +639,81 @@ private fun EmptyFeaturedAudioCard(metadata: FeaturedPackMetadata) {
             Text("${metadata.title} 尚未加入音频", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
             Text("在 app/src/main/assets/featured_audio/ 放入 MP3、M4A、AAC、OGG、WAV 或 FLAC 文件。应用会在构建后自动扫描并展示它们，无需请求手机存储权限。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun PermissionStatusCard(
+    audioPermissionGranted: Boolean,
+    notificationPermissionGranted: Boolean,
+    onRequestAudioPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("权限状态", style = MaterialTheme.typography.titleMedium)
+            PermissionStatusRow(
+                icon = Icons.Default.LibraryMusic,
+                title = "设备音乐",
+                description = if (audioPermissionGranted) {
+                    "已允许 · 可以扫描并播放设备中的本地音频"
+                } else {
+                    "未授权 · 设备音乐资料库暂不可用"
+                },
+                granted = audioPermissionGranted,
+                actionLabel = "授权音乐",
+                onRequest = onRequestAudioPermission
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            PermissionStatusRow(
+                icon = Icons.Default.Notifications,
+                title = "播放通知",
+                description = if (notificationPermissionGranted) {
+                    "已允许 · 通知栏与锁屏会显示播放控制"
+                } else {
+                    "未授权 · 后台播放正常，但系统播放通知不会显示"
+                },
+                granted = notificationPermissionGranted,
+                actionLabel = "授权通知",
+                onRequest = onRequestNotificationPermission
+            )
+        }
+    }
+}
+
+@Composable
+private fun PermissionStatusRow(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    granted: Boolean,
+    actionLabel: String,
+    onRequest: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            modifier = Modifier.size(42.dp),
+            shape = CircleShape,
+            color = if (granted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiaryContainer
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null)
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (granted) {
+            Text("已允许", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        } else {
+            TextButton(onClick = onRequest) { Text(actionLabel) }
         }
     }
 }
@@ -1137,6 +1239,8 @@ private fun PlayerSheetWithProgress(
     repeatMode: Int,
     shuffleEnabled: Boolean,
     playbackSpeed: Float,
+    mixingPlaybackEnabled: Boolean,
+    fadeTransitionsEnabled: Boolean,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1145,6 +1249,8 @@ private fun PlayerSheetWithProgress(
     onSeek: (Float) -> Unit,
     onSetPlaybackStrategy: (PlaybackStrategy) -> Unit,
     onSetPlaybackSpeed: (Float) -> Unit,
+    onSetMixingPlayback: (Boolean) -> Unit,
+    onSetFadeTransitions: (Boolean) -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
@@ -1160,6 +1266,8 @@ private fun PlayerSheetWithProgress(
         repeatMode = repeatMode,
         shuffleEnabled = shuffleEnabled,
         playbackSpeed = playbackSpeed,
+        mixingPlaybackEnabled = mixingPlaybackEnabled,
+        fadeTransitionsEnabled = fadeTransitionsEnabled,
         isFavorite = isFavorite,
         onDismiss = onDismiss,
         onToggle = onToggle,
@@ -1168,6 +1276,8 @@ private fun PlayerSheetWithProgress(
         onSeek = onSeek,
         onSetPlaybackStrategy = onSetPlaybackStrategy,
         onSetPlaybackSpeed = onSetPlaybackSpeed,
+        onSetMixingPlayback = onSetMixingPlayback,
+        onSetFadeTransitions = onSetFadeTransitions,
         onToggleFavorite = onToggleFavorite,
         onOpenQueue = onOpenQueue
     )
@@ -1184,6 +1294,8 @@ private fun PlayerSheet(
     repeatMode: Int,
     shuffleEnabled: Boolean,
     playbackSpeed: Float,
+    mixingPlaybackEnabled: Boolean,
+    fadeTransitionsEnabled: Boolean,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1192,6 +1304,8 @@ private fun PlayerSheet(
     onSeek: (Float) -> Unit,
     onSetPlaybackStrategy: (PlaybackStrategy) -> Unit,
     onSetPlaybackSpeed: (Float) -> Unit,
+    onSetMixingPlayback: (Boolean) -> Unit,
+    onSetFadeTransitions: (Boolean) -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
@@ -1320,6 +1434,38 @@ private fun PlayerSheet(
                     }
                 }
             }
+            Spacer(Modifier.height(16.dp))
+            Text("声音处理", style = MaterialTheme.typography.titleSmall, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(
+                    onClick = { onSetMixingPlayback(!mixingPlaybackEnabled) },
+                    label = { Text(if (mixingPlaybackEnabled) "混音播放：开启" else "混音播放：关闭") },
+                    leadingIcon = { Icon(Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (mixingPlaybackEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+                AssistChip(
+                    onClick = { onSetFadeTransitions(!fadeTransitionsEnabled) },
+                    label = { Text(if (fadeTransitionsEnabled) "淡化：开启" else "淡化：关闭") },
+                    leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (fadeTransitionsEnabled) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (mixingPlaybackEnabled) "混音开启：Muse 不会抢占其他应用的音频焦点，可与其他声音同时播放。" else "独占播放：Muse 会按系统音频焦点规则协调其他应用。",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                if (fadeTransitionsEnabled) "淡化开启：在应用内切歌、上一首、下一首和暂停时使用约 280ms 的淡入淡出。" else "淡化关闭：切歌与暂停立即执行。",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(8.dp))
             Text(
                 playbackStrategy.description,

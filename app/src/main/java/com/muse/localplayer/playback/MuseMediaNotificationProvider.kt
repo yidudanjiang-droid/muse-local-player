@@ -10,10 +10,13 @@ import com.muse.localplayer.R
  * 保留 Media3 标准媒体样式与锁屏控制，同时统一 Muse 的通知文案和状态栏图标。
  */
 @UnstableApi
-class MuseMediaNotificationProvider(context: Context) : DefaultMediaNotificationProvider(
+class MuseMediaNotificationProvider(
+    context: Context,
+    channelId: String
+) : DefaultMediaNotificationProvider(
     context,
     DefaultMediaNotificationProvider.NotificationIdProvider { NOTIFICATION_ID },
-    NOTIFICATION_CHANNEL_ID,
+    channelId,
     R.string.playback_notification_channel
 ) {
     private val appContext = context.applicationContext
@@ -39,6 +42,5 @@ class MuseMediaNotificationProvider(context: Context) : DefaultMediaNotification
 
     private companion object {
         const val NOTIFICATION_ID = 1001
-        const val NOTIFICATION_CHANNEL_ID = "muse_playback"
     }
 }
