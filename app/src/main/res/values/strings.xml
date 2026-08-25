@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Muse 本地音乐</string>
+    <string name="playback_notification_channel">Muse 音乐播放</string>
+    <string name="playback_notification_description">显示正在播放的歌曲并提供锁屏与通知栏控制。</string>
+    <string name="playback_notification_fallback">本地音乐播放中</string>
+</resources>

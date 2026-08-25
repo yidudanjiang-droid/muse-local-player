@@ -1,0 +1,28 @@
+Muse Local Player — Third-Party Notices
+
+This project includes small adaptations of the Android 10+ external MediaStore volume selection pattern and media metadata description mapping pattern from:
+
+MusicX
+Copyright (c) 2023 Vaibhav Jaiswal
+Source: https://github.com/Vaibhav2002/MusicX
+License: MIT License
+
+The adapted code is located in:
+app/src/main/java/com/muse/localplayer/data/MusicRepository.kt
+app/src/main/java/com/muse/localplayer/playback/PlayerViewModel.kt
+
+The original MIT license text is available at:
+https://github.com/Vaibhav2002/MusicX/blob/main/LICENSE.md
+
+All other Muse Local Player source files remain released under the project MIT License unless otherwise noted.
+
+Audiofy
+Copyright 2024 Zakir Sheikh
+Source: https://github.com/googol-apps/Audiofy
+License: Apache License, Version 2.0
+
+This project includes an adaptation of Audiofy's ContentResolver MediaStore observation pattern in:
+app/src/main/java/com/muse/localplayer/data/MediaStoreObserver.kt
+
+A copy of the Apache License, Version 2.0 is included at:
+THIRD_PARTY_LICENSES/Audiofy-APACHE-2.0.txt
