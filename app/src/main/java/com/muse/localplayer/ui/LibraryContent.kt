@@ -32,6 +32,7 @@ internal fun LibraryContent(
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
+    onAddTracksToQueue: (List<Track>) -> Unit,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
     onShowSongs: () -> Unit,
     onMore: (Track) -> Unit
@@ -85,6 +86,7 @@ internal fun LibraryContent(
             tracks = tracks,
             contentPadding = contentPadding,
             onPlayAlbum = onPlayAlbum,
+            onAddTracksToQueue = onAddTracksToQueue,
             onMore = onMore
         )
         LibraryTab.PLAYLISTS -> FavoritesScreen(
@@ -92,6 +94,7 @@ internal fun LibraryContent(
             contentPadding = contentPadding,
             onPlay = onPlay,
             onPlayAll = { onPlayAlbum(favoriteTracks, favoriteTracks.firstOrNull()) },
+            onAddAllToQueue = { onAddTracksToQueue(favoriteTracks) },
             onMore = onMore
         )
     }

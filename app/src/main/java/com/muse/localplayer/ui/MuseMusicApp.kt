@@ -77,6 +77,7 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -308,7 +309,8 @@ fun MuseMusicApp(
                                 viewModel = viewModel,
                                 track = track,
                                 isPlaying = isPlaying,
-                                onOpen = { playerOpen = true }
+                                onOpen = { playerOpen = true },
+                                onOpenQueue = { queueOpen = true }
                             )
                         }
                     }
@@ -353,6 +355,14 @@ fun MuseMusicApp(
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRescan = viewModel::reloadLibrary,
                     onPlay = viewModel::play,
+                    onAddTracksToQueue = { tracksToAdd ->
+                        val addedCount = viewModel.addTracksToQueue(tracksToAdd)
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (addedCount > 0) "已加入 ${addedCount} 首到播放队列" else "这些歌曲已在播放队列中"
+                            )
+                        }
+                    },
                     onPlayAlbum = viewModel::playAlbum,
                     onShowSongs = { selectedTab = LibraryTab.SONGS },
                     onMore = { actionTrack = it }
@@ -392,6 +402,7 @@ fun MuseMusicApp(
                             onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
                             onPlay = viewModel::play,
+                            onAddTracksToQueue = viewModel::addTracksToQueue,
                             onPlayAlbum = viewModel::playAlbum,
                             onShowSongs = { selectedTab = LibraryTab.SONGS },
                             onMore = { actionTrack = it }
@@ -412,8 +423,12 @@ fun MuseMusicApp(
                 actionTrack = null
             },
             onAddToQueue = {
-                viewModel.addToQueue(track)
-                scope.launch { snackbarHostState.showSnackbar("已加入播放队列") }
+                val addedCount = viewModel.addToQueue(track)
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        if (addedCount > 0) "已加入播放队列" else "该歌曲已在播放队列中"
+                    )
+                }
                 actionTrack = null
             },
             onPlayNext = {
@@ -440,6 +455,7 @@ fun MuseMusicApp(
             playbackSpeed = playbackSpeed,
             mixingPlaybackEnabled = mixingPlaybackEnabled,
             fadeTransitionsEnabled = fadeTransitionsEnabled,
+            sleepTimerRemainingMs = sleepTimerRemainingMs,
             isFavorite = currentTrack!!.id in favoriteIds,
             onDismiss = { playerOpen = false },
             onToggle = viewModel::togglePlayback,
@@ -452,6 +468,8 @@ fun MuseMusicApp(
             onSetPlaybackSpeed = viewModel::setPlaybackSpeed,
             onSetMixingPlayback = viewModel::setMixingPlaybackEnabled,
             onSetFadeTransitions = viewModel::setFadeTransitionsEnabled,
+            onSetSleepTimer = viewModel::setSleepTimer,
+            onCancelSleepTimer = viewModel::cancelSleepTimer,
             onToggleFavorite = { viewModel.toggleFavorite(currentTrack!!) },
             onOpenQueue = {
                 playerOpen = false
@@ -468,7 +486,21 @@ fun MuseMusicApp(
             onPlay = viewModel::playQueueItem,
             onRemove = viewModel::removeFromQueue,
             onMove = viewModel::moveQueueItem,
-            onClear = viewModel::clearQueue
+            onClear = {
+                viewModel.clearQueue()
+                scope.launch {
+                    val result = snackbarHostState.showSnackbar(
+                        message = "已清空播放队列",
+                        actionLabel = "撤销",
+                        withDismissAction = true
+                    )
+                    if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                        if (viewModel.restoreLastClearedQueue()) {
+                            snackbarHostState.showSnackbar("已恢复播放队列")
+                        }
+                    }
+                }
+            }
         )
     }
 
@@ -932,6 +964,7 @@ internal fun AlbumsScreen(
     tracks: List<Track>,
     contentPadding: PaddingValues,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
+    onAddTracksToQueue: (List<Track>) -> Unit,
     onMore: (Track) -> Unit
 ) {
     var selectedAlbumId by remember { mutableStateOf<Long?>(null) }
@@ -955,6 +988,7 @@ internal fun AlbumsScreen(
             contentPadding = contentPadding,
             onBack = { selectedAlbumId = null },
             onPlayAll = { onPlayAlbum(selectedTracks, selectedTracks.firstOrNull()) },
+            onAddToQueue = { onAddTracksToQueue(selectedTracks) },
             onPlayTrack = { track -> onPlayAlbum(selectedTracks, track) },
             onMore = onMore
         )
@@ -998,6 +1032,7 @@ private fun AlbumDetailScreen(
     contentPadding: PaddingValues,
     onBack: () -> Unit,
     onPlayAll: () -> Unit,
+    onAddToQueue: () -> Unit,
     onPlayTrack: (Track) -> Unit,
     onMore: (Track) -> Unit
 ) {
@@ -1025,10 +1060,17 @@ private fun AlbumDetailScreen(
                 }
             }
             Spacer(Modifier.height(20.dp))
-            FilledTonalButton(onClick = onPlayAll, enabled = tracks.isNotEmpty()) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("播放整张专辑")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(onClick = onPlayAll, enabled = tracks.isNotEmpty()) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("播放整张专辑")
+                }
+                OutlinedButton(onClick = onAddToQueue, enabled = tracks.isNotEmpty()) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("加入队列")
+                }
             }
             Spacer(Modifier.height(18.dp))
             Text("曲目", style = MaterialTheme.typography.titleLarge)
@@ -1050,6 +1092,7 @@ internal fun FavoritesScreen(
     contentPadding: PaddingValues,
     onPlay: (Track) -> Unit,
     onPlayAll: () -> Unit,
+    onAddAllToQueue: () -> Unit,
     onMore: (Track) -> Unit
 ) {
     if (favoriteTracks.isEmpty()) {
@@ -1078,10 +1121,17 @@ internal fun FavoritesScreen(
                 Spacer(Modifier.height(4.dp))
                 Text("${favoriteTracks.size} 首你喜欢的音乐", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = onPlayAll) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("播放全部收藏")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FilledTonalButton(onClick = onPlayAll) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("播放全部收藏")
+                    }
+                    OutlinedButton(onClick = onAddAllToQueue) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("加入队列")
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
             }
@@ -1293,7 +1343,8 @@ private fun MiniPlayerWithProgress(
     viewModel: PlayerViewModel,
     track: Track,
     isPlaying: Boolean,
-    onOpen: () -> Unit
+    onOpen: () -> Unit,
+    onOpenQueue: () -> Unit
 ) {
     val progress by viewModel.playbackProgress.collectAsStateWithLifecycle()
     MiniPlayer(
@@ -1301,13 +1352,22 @@ private fun MiniPlayerWithProgress(
         isPlaying = isPlaying,
         progress = progress,
         onOpen = onOpen,
+        onOpenQueue = onOpenQueue,
         onToggle = viewModel::togglePlayback,
         onNext = viewModel::skipNext
     )
 }
 
 @Composable
-private fun MiniPlayer(track: Track, isPlaying: Boolean, progress: Float, onOpen: () -> Unit, onToggle: () -> Unit, onNext: () -> Unit) {
+private fun MiniPlayer(
+    track: Track,
+    isPlaying: Boolean,
+    progress: Float,
+    onOpen: () -> Unit,
+    onOpenQueue: () -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit
+) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
         Column {
             androidx.compose.material3.LinearProgressIndicator(
@@ -1325,6 +1385,7 @@ private fun MiniPlayer(track: Track, isPlaying: Boolean, progress: Float, onOpen
                 }
                 IconButton(onClick = onToggle) { Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "播放或暂停") }
                 IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, contentDescription = "下一首") }
+                IconButton(onClick = onOpenQueue) { Icon(Icons.AutoMirrored.Filled.QueueMusic, contentDescription = "打开播放队列") }
             }
         }
     }
@@ -1340,6 +1401,7 @@ private fun PlayerSheetWithProgress(
     playbackSpeed: Float,
     mixingPlaybackEnabled: Boolean,
     fadeTransitionsEnabled: Boolean,
+    sleepTimerRemainingMs: Long,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1350,6 +1412,8 @@ private fun PlayerSheetWithProgress(
     onSetPlaybackSpeed: (Float) -> Unit,
     onSetMixingPlayback: (Boolean) -> Unit,
     onSetFadeTransitions: (Boolean) -> Unit,
+    onSetSleepTimer: (Int) -> Unit,
+    onCancelSleepTimer: () -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
@@ -1367,6 +1431,7 @@ private fun PlayerSheetWithProgress(
         playbackSpeed = playbackSpeed,
         mixingPlaybackEnabled = mixingPlaybackEnabled,
         fadeTransitionsEnabled = fadeTransitionsEnabled,
+        sleepTimerRemainingMs = sleepTimerRemainingMs,
         isFavorite = isFavorite,
         onDismiss = onDismiss,
         onToggle = onToggle,
@@ -1377,6 +1442,8 @@ private fun PlayerSheetWithProgress(
         onSetPlaybackSpeed = onSetPlaybackSpeed,
         onSetMixingPlayback = onSetMixingPlayback,
         onSetFadeTransitions = onSetFadeTransitions,
+        onSetSleepTimer = onSetSleepTimer,
+        onCancelSleepTimer = onCancelSleepTimer,
         onToggleFavorite = onToggleFavorite,
         onOpenQueue = onOpenQueue
     )
@@ -1395,6 +1462,7 @@ private fun PlayerSheet(
     playbackSpeed: Float,
     mixingPlaybackEnabled: Boolean,
     fadeTransitionsEnabled: Boolean,
+    sleepTimerRemainingMs: Long,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1405,6 +1473,8 @@ private fun PlayerSheet(
     onSetPlaybackSpeed: (Float) -> Unit,
     onSetMixingPlayback: (Boolean) -> Unit,
     onSetFadeTransitions: (Boolean) -> Unit,
+    onSetSleepTimer: (Int) -> Unit,
+    onCancelSleepTimer: () -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
@@ -1565,7 +1635,26 @@ private fun PlayerSheet(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("睡眠定时", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (sleepTimerRemainingMs > 0L) "将在 ${formatTime(sleepTimerRemainingMs)} 后平滑暂停" else "未设置自动暂停",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (sleepTimerRemainingMs > 0L) {
+                    TextButton(onClick = onCancelSleepTimer) { Text("关闭") }
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(15, 30, 60).forEach { minutes ->
+                    AssistChip(onClick = { onSetSleepTimer(minutes) }, label = { Text("${minutes} 分钟") })
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             Text(
                 playbackStrategy.description,
                 style = MaterialTheme.typography.labelMedium,

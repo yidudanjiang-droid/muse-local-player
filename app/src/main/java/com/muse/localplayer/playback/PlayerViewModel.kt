@@ -117,6 +117,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var timelineTrackId: String? = null
     private var stableDurationMs: Long = 0L
     private var playbackHistoryIds: List<Long> = emptyList()
+    private var lastClearedQueue: List<Track> = emptyList()
+    private var lastClearedCurrentTrack: Track? = null
     private val sessionToken = SessionToken(application, ComponentName(application, MusicPlaybackService::class.java))
     private val controllerFuture = MediaController.Builder(application, sessionToken).buildAsync()
 
@@ -403,15 +405,21 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun addToQueue(track: Track) {
-        if (_queue.value.any { it.id == track.id }) return
+    fun addToQueue(track: Track): Int = addTracksToQueue(listOf(track))
+
+    fun addTracksToQueue(tracks: List<Track>): Int {
+        val additions = tracks.distinctBy(Track::id).filter { candidate ->
+            _queue.value.none { it.id == candidate.id }
+        }
+        if (additions.isEmpty()) return 0
         val activeController = controller
         if (activeController == null || activeController.mediaItemCount == 0) {
-            updateQueueState(listOf(track))
+            updateQueueState(_queue.value + additions)
         } else {
-            activeController.addMediaItem(track.toMediaItem())
-            updateQueueState(_queue.value + track)
+            activeController.addMediaItems(additions.map { it.toMediaItem() })
+            updateQueueState(_queue.value + additions)
         }
+        return additions.size
     }
 
     fun playNext(track: Track) {
@@ -450,12 +458,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearQueue() {
+        lastClearedQueue = _queue.value
+        lastClearedCurrentTrack = _currentTrack.value
         controller?.clearMediaItems()
         _currentTrack.value = null
         _isPlaying.value = false
         resetTimelineForTrackId(null)
         updateQueueState(emptyList())
         viewModelScope.launch { preferencesRepository.savePlaybackResumeState(null, 0L) }
+    }
+
+    fun restoreLastClearedQueue(): Boolean {
+        val savedQueue = lastClearedQueue
+        if (savedQueue.isEmpty()) return false
+        val startTrack = lastClearedCurrentTrack?.takeIf { current -> savedQueue.any { it.id == current.id } }
+            ?: savedQueue.first()
+        setQueue(savedQueue, startTrack, shouldPlay = false)
+        lastClearedQueue = emptyList()
+        lastClearedCurrentTrack = null
+        return true
     }
 
     fun togglePlayback() {
