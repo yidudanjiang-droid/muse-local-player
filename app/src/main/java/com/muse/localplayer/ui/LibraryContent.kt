@@ -70,6 +70,7 @@ internal fun LibraryContent(
             onRescan = onRescan,
             onPlay = onPlay,
             onPlayFeaturedTracks = onPlayFeaturedTracks,
+            onAddFeaturedTracksToQueue = { onAddTracksToQueue(featuredTracks) },
             onSongsClick = onShowSongs,
             onMore = onMore
         )

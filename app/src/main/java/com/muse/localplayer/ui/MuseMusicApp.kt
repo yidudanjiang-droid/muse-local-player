@@ -623,6 +623,7 @@ internal fun HomeScreen(
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
     onPlayFeaturedTracks: () -> Unit,
+    onAddFeaturedTracksToQueue: () -> Unit,
     onSongsClick: () -> Unit,
     onMore: (Track) -> Unit
 ) {
@@ -655,7 +656,8 @@ internal fun HomeScreen(
                 artworkUri = featuredTracks.firstOrNull()?.artworkUri,
                 trackCount = featuredTracks.size,
                 totalDurationMs = featuredDuration,
-                onPlay = if (featuredTracks.isEmpty()) null else onPlayFeaturedTracks
+                onPlay = if (featuredTracks.isEmpty()) null else onPlayFeaturedTracks,
+                onAddToQueue = if (featuredTracks.isEmpty()) null else onAddFeaturedTracksToQueue
             )
         }
         item {
@@ -704,7 +706,8 @@ private fun FeaturedPackageHero(
     artworkUri: android.net.Uri?,
     trackCount: Int,
     totalDurationMs: Long,
-    onPlay: (() -> Unit)?
+    onPlay: (() -> Unit)?,
+    onAddToQueue: (() -> Unit)?
 ) {
     Card(
         onClick = { onPlay?.invoke() },
@@ -746,10 +749,19 @@ private fun FeaturedPackageHero(
                     )
                     if (onPlay != null) {
                         Spacer(Modifier.height(14.dp))
-                        FilledTonalButton(onClick = onPlay) {
-                            Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(metadata.playLabel)
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            FilledTonalButton(onClick = onPlay) {
+                                Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(metadata.playLabel)
+                            }
+                            if (onAddToQueue != null) {
+                                OutlinedButton(onClick = onAddToQueue) {
+                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("加入队列")
+                                }
+                            }
                         }
                     }
                 }

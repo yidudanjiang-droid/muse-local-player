@@ -21,8 +21,8 @@ android {
         applicationId = "com.muse.localplayer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.1.10"
+        versionCode = 15
+        versionName = "1.1.11"
     }
 
     compileOptions {
