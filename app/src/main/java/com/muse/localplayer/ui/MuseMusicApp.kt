@@ -402,7 +402,14 @@ fun MuseMusicApp(
                             onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
                             onPlay = viewModel::play,
-                            onAddTracksToQueue = viewModel::addTracksToQueue,
+                            onAddTracksToQueue = { tracksToAdd ->
+                                val addedCount = viewModel.addTracksToQueue(tracksToAdd)
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        if (addedCount > 0) "已加入 ${addedCount} 首到播放队列" else "这些歌曲已在播放队列中"
+                                    )
+                                }
+                            },
                             onPlayAlbum = viewModel::playAlbum,
                             onShowSongs = { selectedTab = LibraryTab.SONGS },
                             onMore = { actionTrack = it }
@@ -484,7 +491,22 @@ fun MuseMusicApp(
             currentTrack = currentTrack,
             onDismiss = { queueOpen = false },
             onPlay = viewModel::playQueueItem,
-            onRemove = viewModel::removeFromQueue,
+            onRemove = { index ->
+                viewModel.removeFromQueue(index)?.let { removedTrack ->
+                    scope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = "已将《${removedTrack.title}》移出队列",
+                            actionLabel = "撤销",
+                            withDismissAction = true
+                        )
+                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                            if (viewModel.restoreLastRemovedQueueItem()) {
+                                snackbarHostState.showSnackbar("已恢复到原队列位置")
+                            }
+                        }
+                    }
+                }
+            },
             onMove = viewModel::moveQueueItem,
             onClear = {
                 viewModel.clearQueue()

@@ -33,6 +33,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+    private data class RemovedQueueItem(
+        val track: Track,
+        val index: Int
+    )
+
     private val musicRepository = MusicRepository(application)
     private val featuredAudioRepository = FeaturedAudioRepository(application)
     private val mediaStoreObserver = MediaStoreObserver(application)
@@ -119,6 +124,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var playbackHistoryIds: List<Long> = emptyList()
     private var lastClearedQueue: List<Track> = emptyList()
     private var lastClearedCurrentTrack: Track? = null
+    private var lastRemovedQueueItem: RemovedQueueItem? = null
+    private val failedTrackIds = mutableSetOf<Long>()
     private val sessionToken = SessionToken(application, ComponentName(application, MusicPlaybackService::class.java))
     private val controllerFuture = MediaController.Builder(application, sessionToken).buildAsync()
 
@@ -162,6 +169,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) {
+                failedTrackIds.clear()
+            }
             refreshPlaybackState()
         }
 
@@ -169,8 +179,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             progressJob?.cancel()
             progressJob = null
             _isPlaying.value = false
+            val recovered = controller?.let(::skipFailedTrack) == true
             refreshPlaybackState(forcePersist = true)
-            _playerMessage.value = "无法播放当前音频。请确认文件仍在设备中且格式受支持。"
+            _playerMessage.value = if (recovered) {
+                "当前音频无法播放，已自动跳过并继续下一首。"
+            } else {
+                "无法播放当前音频。请确认文件仍在设备中且格式受支持。"
+            }
         }
     }
 
@@ -357,7 +372,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun playQueueItem(index: Int) {
         val activeController = controller ?: return
-        if (index !in _queue.value.indices) return
+        val currentQueue = _queue.value
+        if (index !in currentQueue.indices) return
+        if (activeController.mediaItemCount == 0) {
+            transitionToQueue(activeController, currentQueue, index)
+            return
+        }
         val switchItem = {
             activeController.seekToDefaultPosition(index)
             startOrResume(activeController, forceFadeIn = true)
@@ -442,10 +462,30 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         updateQueueState(currentQueue.toMutableList().also { it.add(insertIndex, track) })
     }
 
-    fun removeFromQueue(index: Int) {
-        if (index !in _queue.value.indices) return
+    fun removeFromQueue(index: Int): Track? {
+        val currentQueue = _queue.value
+        if (index !in currentQueue.indices) return null
+        val removedTrack = currentQueue[index]
         controller?.removeMediaItem(index)
-        updateQueueState(_queue.value.toMutableList().also { it.removeAt(index) })
+        updateQueueState(currentQueue.toMutableList().also { it.removeAt(index) })
+        lastRemovedQueueItem = RemovedQueueItem(removedTrack, index)
+        return removedTrack
+    }
+
+    /** Restores the most recently removed queue item during the short UI undo window. */
+    fun restoreLastRemovedQueueItem(): Boolean {
+        val removedItem = lastRemovedQueueItem ?: return false
+        val currentQueue = _queue.value
+        if (currentQueue.any { it.id == removedItem.track.id }) return false
+        val insertIndex = removedItem.index.coerceIn(0, currentQueue.size)
+        val restoredQueue = currentQueue.toMutableList().also { it.add(insertIndex, removedItem.track) }
+        val activeController = controller
+        if (activeController != null && activeController.mediaItemCount > 0) {
+            activeController.addMediaItem(insertIndex, removedItem.track.toMediaItem())
+        }
+        updateQueueState(restoredQueue)
+        lastRemovedQueueItem = null
+        return true
     }
 
     fun moveQueueItem(fromIndex: Int, toIndex: Int) {
@@ -455,11 +495,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val item = updatedQueue.removeAt(fromIndex)
         updatedQueue.add(toIndex, item)
         updateQueueState(updatedQueue)
+        lastRemovedQueueItem = null
     }
 
     fun clearQueue() {
         lastClearedQueue = _queue.value
         lastClearedCurrentTrack = _currentTrack.value
+        lastRemovedQueueItem = null
         controller?.clearMediaItems()
         _currentTrack.value = null
         _isPlaying.value = false
@@ -629,6 +671,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 delay(minOf(SLEEP_TIMER_TICK_MS, remaining))
             }
         }
+    }
+
+    /**
+     * 本地库可能在扫描后被删除、移动，或包含设备解码器不支持的文件。
+     * 保留已失败曲目集合，避免在循环/随机策略下反复卡在同一个坏文件。
+     */
+    private fun skipFailedTrack(activeController: MediaController): Boolean {
+        val failedTrackId = activeController.currentMediaItem?.mediaId?.toLongOrNull() ?: return false
+        failedTrackIds += failedTrackId
+        if (failedTrackIds.size >= activeController.mediaItemCount || !activeController.hasNextMediaItem()) {
+            return false
+        }
+        activeController.seekToNextMediaItem()
+        activeController.prepare()
+        startOrResume(activeController, forceFadeIn = true)
+        return true
     }
 
     private fun transitionToQueue(
@@ -813,7 +871,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val now = android.os.SystemClock.elapsedRealtime()
         if (!force && now - lastResumePersistenceAt < RESUME_PERSIST_INTERVAL_MS) return
         lastResumePersistenceAt = now
-        val position = _positionMs.value
+        val duration = _durationMs.value
+        val rawPosition = _positionMs.value
+        // 避免在一首歌刚播放完时将“结尾位置”持久化，重启后误触发立即结束。
+        val position = if (
+            duration > 0L && rawPosition >= duration - RESUME_END_TOLERANCE_MS
+        ) {
+            0L
+        } else {
+            rawPosition
+        }
         resumeState = PlaybackResumeState(trackId, position)
         viewModelScope.launch { preferencesRepository.savePlaybackResumeState(trackId, position) }
     }
@@ -852,6 +919,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private companion object {
         const val RESUME_PERSIST_INTERVAL_MS = 10_000L
+        const val RESUME_END_TOLERANCE_MS = 2_000L
         const val PREVIOUS_RESTART_THRESHOLD_MS = 5_000L
         const val PROGRESS_UPDATE_INTERVAL_MS = 500L
         val MUSIC_AUDIO_ATTRIBUTES: AudioAttributes = AudioAttributes.Builder()

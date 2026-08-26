@@ -119,9 +119,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        val audioPermissionWasGranted = audioPermissionGranted
         audioPermissionGranted = hasAudioPermission()
         notificationPermissionGranted = hasNotificationPermission()
-        if (audioPermissionGranted) playerViewModel.onAudioPermissionResult(true)
+        // 仅在用户从系统设置返回且音频授权状态变化时刷新，避免每次回前台重扫 MediaStore。
+        if (audioPermissionGranted != audioPermissionWasGranted) {
+            playerViewModel.onAudioPermissionResult(audioPermissionGranted)
+        }
     }
 
     private fun markPrompted(permissions: Collection<String>) {
