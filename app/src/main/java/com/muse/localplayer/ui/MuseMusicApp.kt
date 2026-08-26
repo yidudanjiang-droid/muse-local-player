@@ -161,6 +161,7 @@ fun MuseMusicApp(
     val mixingPlaybackEnabled by viewModel.mixingPlaybackEnabled.collectAsStateWithLifecycle()
     val fadeTransitionsEnabled by viewModel.fadeTransitionsEnabled.collectAsStateWithLifecycle()
     val playbackHistory by viewModel.playbackHistory.collectAsStateWithLifecycle()
+    val bookmarks by viewModel.bookmarkItems.collectAsStateWithLifecycle()
     val recentlyAdded by viewModel.recentlyAdded.collectAsStateWithLifecycle()
     val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsStateWithLifecycle()
     val playerMessage by viewModel.playerMessage.collectAsStateWithLifecycle()
@@ -365,11 +366,14 @@ fun MuseMusicApp(
                     audioPermissionGranted = audioPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
                     playbackHistory = playbackHistory,
+                    bookmarks = bookmarks,
                     recentlyAdded = recentlyAdded,
                     sleepTimerRemainingMs = sleepTimerRemainingMs,
                     onSetSleepTimer = viewModel::setSleepTimer,
                     onCancelSleepTimer = viewModel::cancelSleepTimer,
                     onClearPlaybackHistory = viewModel::clearPlaybackHistory,
+                    onPlayBookmark = viewModel::playBookmark,
+                    onRemoveBookmark = viewModel::removeBookmark,
                     onRequestPermission = onRequestAudioPermission,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRescan = viewModel::reloadLibrary,
@@ -413,11 +417,14 @@ fun MuseMusicApp(
                             audioPermissionGranted = audioPermissionGranted,
                             notificationPermissionGranted = notificationPermissionGranted,
                             playbackHistory = playbackHistory,
+                            bookmarks = bookmarks,
                             recentlyAdded = recentlyAdded,
                             sleepTimerRemainingMs = sleepTimerRemainingMs,
                             onSetSleepTimer = viewModel::setSleepTimer,
                             onCancelSleepTimer = viewModel::cancelSleepTimer,
                             onClearPlaybackHistory = viewModel::clearPlaybackHistory,
+                            onPlayBookmark = viewModel::playBookmark,
+                            onRemoveBookmark = viewModel::removeBookmark,
                             onRequestPermission = onRequestAudioPermission,
                             onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
@@ -498,6 +505,7 @@ fun MuseMusicApp(
             onSetFadeTransitions = viewModel::setFadeTransitionsEnabled,
             onSetSleepTimer = viewModel::setSleepTimer,
             onCancelSleepTimer = viewModel::cancelSleepTimer,
+            onAddBookmark = viewModel::addBookmark,
             onToggleFavorite = { viewModel.toggleFavorite(currentTrack!!) },
             onOpenQueue = {
                 playerOpen = false
@@ -631,11 +639,14 @@ internal fun HomeScreen(
     audioPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
     playbackHistory: List<Track>,
+    bookmarks: List<PlayerViewModel.BookmarkItem>,
     recentlyAdded: List<Track>,
     sleepTimerRemainingMs: Long,
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
     onClearPlaybackHistory: () -> Unit,
+    onPlayBookmark: (PlayerViewModel.BookmarkItem) -> Unit,
+    onRemoveBookmark: (PlayerViewModel.BookmarkItem) -> Unit,
     onRequestPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
@@ -685,6 +696,18 @@ internal fun HomeScreen(
                 onCancelTimer = onCancelSleepTimer
             )
         }
+        if (bookmarks.isNotEmpty()) {
+            item {
+                Text("继续收听", style = MaterialTheme.typography.titleLarge)
+            }
+            items(bookmarks.take(HOME_PREVIEW_LIMIT), key = { "bookmark_${it.bookmark.savedAtEpochMs}" }) { item ->
+                BookmarkListItem(
+                    item = item,
+                    onPlay = { onPlayBookmark(item) },
+                    onRemove = { onRemoveBookmark(item) }
+                )
+            }
+        }
         if (playbackHistory.isNotEmpty()) {
             item { SectionHeader("最近播放", "清空", onClearPlaybackHistory) }
             items(playbackHistory.take(HOME_PREVIEW_LIMIT), key = { "history_${it.id}" }) { track ->
@@ -715,6 +738,39 @@ internal fun HomeScreen(
         }
         item { SectionHeader("设备音乐", "打开资料库", onSongsClick) }
         item { LibraryStatusCard(libraryUiState = libraryUiState, onRequestPermission = onRequestPermission, onRescan = onRescan) }
+    }
+}
+
+@Composable
+private fun BookmarkListItem(
+    item: PlayerViewModel.BookmarkItem,
+    onPlay: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Card(
+        onClick = onPlay,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AlbumArt(Modifier.size(48.dp), item.track.artworkUri, item.track.title, ArtEmphasis.Secondary)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.track.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "从 ${formatTime(item.bookmark.positionMs)} 继续 · ${item.track.artist}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            TextButton(onClick = onRemove) { Text("移除") }
+        }
     }
 }
 
@@ -1512,6 +1568,7 @@ private fun PlayerSheetWithProgress(
     onSetFadeTransitions: (Boolean) -> Unit,
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
+    onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
@@ -1546,6 +1603,7 @@ private fun PlayerSheetWithProgress(
         onSetFadeTransitions = onSetFadeTransitions,
         onSetSleepTimer = onSetSleepTimer,
         onCancelSleepTimer = onCancelSleepTimer,
+        onAddBookmark = onAddBookmark,
         onToggleFavorite = onToggleFavorite,
         onOpenQueue = onOpenQueue
     )
@@ -1579,6 +1637,7 @@ private fun PlayerSheet(
     onSetFadeTransitions: (Boolean) -> Unit,
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
+    onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
 ) {
@@ -1650,6 +1709,7 @@ private fun PlayerSheet(
                     Spacer(Modifier.height(4.dp))
                     Text(track.artist, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD6E1F6), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                TextButton(onClick = { onAddBookmark() }) { Text("存书签") }
                 IconButton(onClick = onToggleFavorite) {
                     Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = if (isFavorite) "取消收藏" else "加入收藏", tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }

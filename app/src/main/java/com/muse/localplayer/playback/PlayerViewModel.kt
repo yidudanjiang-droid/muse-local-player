@@ -25,6 +25,7 @@ import com.muse.localplayer.data.LyricLine
 import com.muse.localplayer.data.LyricsRepository
 import com.muse.localplayer.data.MediaStoreObserver
 import com.muse.localplayer.data.MusicRepository
+import com.muse.localplayer.data.PlaybackBookmark
 import com.muse.localplayer.data.PlaybackResumeState
 import com.muse.localplayer.data.Track
 import com.muse.localplayer.data.UserPreferencesRepository
@@ -41,6 +42,11 @@ data class PlayerFeedback(
 )
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
+    data class BookmarkItem(
+        val bookmark: PlaybackBookmark,
+        val track: Track
+    )
+
     private data class RemovedQueueItem(
         val track: Track,
         val index: Int
@@ -103,6 +109,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _playbackHistory = MutableStateFlow<List<Track>>(emptyList())
     val playbackHistory = _playbackHistory.asStateFlow()
 
+    private val _bookmarkItems = MutableStateFlow<List<BookmarkItem>>(emptyList())
+    val bookmarkItems = _bookmarkItems.asStateFlow()
+
     private val _recentlyAdded = MutableStateFlow<List<Track>>(emptyList())
     val recentlyAdded = _recentlyAdded.asStateFlow()
 
@@ -140,6 +149,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var timelineTrackId: String? = null
     private var stableDurationMs: Long = 0L
     private var playbackHistoryIds: List<Long> = emptyList()
+    private var savedBookmarks: List<PlaybackBookmark> = emptyList()
+    private var pendingBookmark: BookmarkItem? = null
     private var lastClearedQueue: List<Track> = emptyList()
     private var lastClearedCurrentTrack: Track? = null
     private var lastRemovedQueueItem: RemovedQueueItem? = null
@@ -228,7 +239,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 syncCurrentTrack(connectedController.currentMediaItem)
                 syncQueueFromController(persist = false)
                 restoreSavedQueueIfPossible()
-                pendingTrack?.let {
+                pendingBookmark?.let {
+                    pendingBookmark = null
+                    playBookmark(it)
+                } ?: pendingTrack?.let {
                     pendingTrack = null
                     play(it)
                 }
@@ -275,6 +289,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             preferencesRepository.playbackHistoryIds.collect { ids ->
                 playbackHistoryIds = ids
                 refreshPlaybackHistory()
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.playbackBookmarks.collect { bookmarks ->
+                savedBookmarks = bookmarks
+                refreshBookmarks()
             }
         }
         viewModelScope.launch {
@@ -350,6 +370,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .take(8)
         reconcileQueueAfterLibraryUpdate(previousQueue)
         refreshPlaybackHistory()
+        refreshBookmarks()
     }
 
     /**
@@ -753,6 +774,38 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { preferencesRepository.clearPlaybackHistory() }
     }
 
+    fun addBookmark(): Boolean {
+        val track = _currentTrack.value ?: return false
+        val position = _positionMs.value.coerceAtLeast(0L)
+        viewModelScope.launch { preferencesRepository.addPlaybackBookmark(track.id, position) }
+        _playerMessage.value = PlayerFeedback("已保存《${track.title}》的 ${formatTimestamp(position)} 书签。")
+        return true
+    }
+
+    fun removeBookmark(item: BookmarkItem) {
+        viewModelScope.launch { preferencesRepository.removePlaybackBookmark(item.bookmark) }
+    }
+
+    fun playBookmark(item: BookmarkItem) {
+        failedTrackIds.remove(item.track.id)
+        val activeController = controller ?: run {
+            pendingBookmark = item
+            return
+        }
+        val queueToPlay = _queue.value.ifEmpty { tracksBySource[item.track.source].orEmpty() }
+        val targetQueue = if (queueToPlay.any { it.id == item.track.id }) queueToPlay else queueToPlay + item.track
+        val targetIndex = targetQueue.indexOfFirst { it.id == item.track.id }.coerceAtLeast(0)
+        if (activeController.currentMediaItem?.mediaId == item.track.id.toString()) {
+            activeController.seekTo(item.bookmark.positionMs)
+            startOrResume(activeController, forceFadeIn = true)
+        } else {
+            transitionToQueue(activeController, targetQueue, targetIndex, item.bookmark.positionMs)
+        }
+        _currentTrack.value = item.track
+        _isPlaying.value = true
+        _playerMessage.value = PlayerFeedback("已从 ${formatTimestamp(item.bookmark.positionMs)} 继续《${item.track.title}》。")
+    }
+
     fun setMixingPlaybackEnabled(enabled: Boolean) {
         _mixingPlaybackEnabled.value = enabled
         controller?.let(::applyAudioFocusPolicy)
@@ -781,6 +834,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun refreshPlaybackHistory() {
         _playbackHistory.value = playbackHistoryIds.mapNotNull(trackIndex::get)
+    }
+
+    private fun refreshBookmarks() {
+        val resolved = savedBookmarks.mapNotNull { bookmark ->
+            trackIndex[bookmark.trackId]?.let { track -> BookmarkItem(bookmark, track) }
+        }
+        _bookmarkItems.value = resolved
+        if (resolved.size != savedBookmarks.size) {
+            savedBookmarks.filter { bookmark -> resolved.none { it.bookmark == bookmark } }
+                .forEach { stale -> viewModelScope.launch { preferencesRepository.removePlaybackBookmark(stale) } }
+        }
     }
 
     private fun scheduleSleepTimer(endEpochMs: Long) {
@@ -839,13 +903,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun transitionToQueue(
         activeController: MediaController,
         queue: List<Track>,
-        startIndex: Int
+        startIndex: Int,
+        startPositionMs: Long = 0L
     ) {
         // 新的显式播放上下文应重新允许各文件被尝试一次。
         failedTrackIds.clear()
         val replaceAndPlay = {
             resetTimelineForTrackId(queue[startIndex].id.toString())
-            activeController.setMediaItems(queue.map { it.toMediaItem() }, startIndex, 0L)
+            activeController.setMediaItems(queue.map { it.toMediaItem() }, startIndex, startPositionMs.coerceAtLeast(0L))
             activeController.prepare()
             updateQueueState(queue)
             startOrResume(activeController, forceFadeIn = true)
@@ -1031,6 +1096,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _queue.value = _queue.value.map { if (it.id == trackId) updated else it }
         if (_currentTrack.value?.id == trackId) _currentTrack.value = updated
         tracksBySource = _tracks.value.groupBy(Track::source)
+    }
+
+    private fun formatTimestamp(positionMs: Long): String {
+        val totalSeconds = positionMs.coerceAtLeast(0L) / 1_000L
+        return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
     }
 
     private fun persistResumeState(force: Boolean) {

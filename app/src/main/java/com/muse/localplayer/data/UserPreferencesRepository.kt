@@ -23,6 +23,12 @@ data class PlaybackResumeState(
     val positionMs: Long
 )
 
+data class PlaybackBookmark(
+    val trackId: Long,
+    val positionMs: Long,
+    val savedAtEpochMs: Long
+)
+
 class UserPreferencesRepository(private val context: Context) {
     private val preferences: Flow<Preferences> = context.musePreferences.data
         .catch { error ->
@@ -79,6 +85,16 @@ class UserPreferencesRepository(private val context: Context) {
             trackId = preferences[KEY_RESUME_TRACK_ID],
             positionMs = preferences[KEY_RESUME_POSITION_MS] ?: 0L
         )
+    }
+
+    val playbackBookmarks: Flow<List<PlaybackBookmark>> = preferences.map { preferences ->
+        preferences[KEY_PLAYBACK_BOOKMARKS]
+            .orEmpty()
+            .split(BOOKMARK_SEPARATOR)
+            .mapNotNull(::decodeBookmark)
+            .distinctBy { it.trackId to it.positionMs }
+            .sortedByDescending(PlaybackBookmark::savedAtEpochMs)
+            .take(BOOKMARK_LIMIT)
     }
 
     suspend fun toggleFavorite(trackId: Long) {
@@ -162,6 +178,50 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun addPlaybackBookmark(trackId: Long, positionMs: Long) {
+        val bookmark = PlaybackBookmark(
+            trackId = trackId,
+            positionMs = positionMs.coerceAtLeast(0L),
+            savedAtEpochMs = System.currentTimeMillis()
+        )
+        context.musePreferences.edit { preferences ->
+            val updated = preferences[KEY_PLAYBACK_BOOKMARKS]
+                .orEmpty()
+                .split(BOOKMARK_SEPARATOR)
+                .mapNotNull(::decodeBookmark)
+                .filterNot { it.trackId == bookmark.trackId && it.positionMs == bookmark.positionMs }
+                .toMutableList()
+            updated.add(0, bookmark)
+            preferences[KEY_PLAYBACK_BOOKMARKS] = updated
+                .sortedByDescending(PlaybackBookmark::savedAtEpochMs)
+                .take(BOOKMARK_LIMIT)
+                .joinToString(BOOKMARK_SEPARATOR) { it.encode() }
+        }
+    }
+
+    suspend fun removePlaybackBookmark(bookmark: PlaybackBookmark) {
+        context.musePreferences.edit { preferences ->
+            val updated = preferences[KEY_PLAYBACK_BOOKMARKS]
+                .orEmpty()
+                .split(BOOKMARK_SEPARATOR)
+                .mapNotNull(::decodeBookmark)
+                .filterNot { it.savedAtEpochMs == bookmark.savedAtEpochMs }
+            if (updated.isEmpty()) preferences.remove(KEY_PLAYBACK_BOOKMARKS)
+            else preferences[KEY_PLAYBACK_BOOKMARKS] = updated.joinToString(BOOKMARK_SEPARATOR) { it.encode() }
+        }
+    }
+
+    private fun PlaybackBookmark.encode(): String = "$trackId$BOOKMARK_FIELD_SEPARATOR$positionMs$BOOKMARK_FIELD_SEPARATOR$savedAtEpochMs"
+
+    private fun decodeBookmark(raw: String): PlaybackBookmark? {
+        val fields = raw.split(BOOKMARK_FIELD_SEPARATOR)
+        if (fields.size != 3) return null
+        val trackId = fields[0].toLongOrNull() ?: return null
+        val positionMs = fields[1].toLongOrNull()?.takeIf { it >= 0L } ?: return null
+        val savedAt = fields[2].toLongOrNull()?.takeIf { it > 0L } ?: return null
+        return PlaybackBookmark(trackId, positionMs, savedAt)
+    }
+
     companion object {
         private val KEY_FAVORITES = stringSetPreferencesKey("favorite_ids")
         private val KEY_QUEUE = stringPreferencesKey("queue_ids")
@@ -174,6 +234,10 @@ class UserPreferencesRepository(private val context: Context) {
         private val KEY_SLEEP_TIMER_END_EPOCH_MS = longPreferencesKey("sleep_timer_end_epoch_ms")
         private val KEY_RESUME_TRACK_ID = longPreferencesKey("resume_track_id")
         private val KEY_RESUME_POSITION_MS = longPreferencesKey("resume_position_ms")
+        private val KEY_PLAYBACK_BOOKMARKS = stringPreferencesKey("playback_bookmarks")
         private const val HISTORY_LIMIT = 50
+        private const val BOOKMARK_LIMIT = 30
+        private const val BOOKMARK_SEPARATOR = ";"
+        private const val BOOKMARK_FIELD_SEPARATOR = "|"
     }
 }

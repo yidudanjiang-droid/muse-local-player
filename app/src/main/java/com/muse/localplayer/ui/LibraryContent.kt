@@ -8,6 +8,7 @@ import com.muse.localplayer.data.FeaturedPackMetadata
 import com.muse.localplayer.data.LibraryTab
 import com.muse.localplayer.data.Track
 import com.muse.localplayer.playback.LibraryUiState
+import com.muse.localplayer.playback.PlayerViewModel
 
 @Composable
 internal fun LibraryContent(
@@ -23,11 +24,14 @@ internal fun LibraryContent(
     audioPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
     playbackHistory: List<Track>,
+    bookmarks: List<PlayerViewModel.BookmarkItem>,
     recentlyAdded: List<Track>,
     sleepTimerRemainingMs: Long,
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
     onClearPlaybackHistory: () -> Unit,
+    onPlayBookmark: (PlayerViewModel.BookmarkItem) -> Unit,
+    onRemoveBookmark: (PlayerViewModel.BookmarkItem) -> Unit,
     onRequestPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
@@ -60,11 +64,14 @@ internal fun LibraryContent(
             audioPermissionGranted = audioPermissionGranted,
             notificationPermissionGranted = notificationPermissionGranted,
             playbackHistory = playbackHistory,
+            bookmarks = bookmarks,
             recentlyAdded = recentlyAdded,
             sleepTimerRemainingMs = sleepTimerRemainingMs,
             onSetSleepTimer = onSetSleepTimer,
             onCancelSleepTimer = onCancelSleepTimer,
             onClearPlaybackHistory = onClearPlaybackHistory,
+            onPlayBookmark = onPlayBookmark,
+            onRemoveBookmark = onRemoveBookmark,
             onRequestPermission = onRequestPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
             onRescan = onRescan,
