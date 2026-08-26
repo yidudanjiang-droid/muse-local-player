@@ -32,6 +32,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+data class PlayerFeedback(
+    val text: String,
+    val actionLabel: String? = null
+)
+
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
     private data class RemovedQueueItem(
         val track: Track,
@@ -103,7 +108,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _controllerReady = MutableStateFlow(false)
     val controllerReady = _controllerReady.asStateFlow()
 
-    private val _playerMessage = MutableStateFlow<String?>(null)
+    private val _playerMessage = MutableStateFlow<PlayerFeedback?>(null)
     val playerMessage = _playerMessage.asStateFlow()
 
     private var controller: MediaController? = null
@@ -126,6 +131,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastClearedCurrentTrack: Track? = null
     private var lastRemovedQueueItem: RemovedQueueItem? = null
     private var lastTrimmedQueueItems: List<Track> = emptyList()
+    private var lastFailedTrack: Track? = null
     private val failedTrackIds = mutableSetOf<Long>()
     private val sessionToken = SessionToken(application, ComponentName(application, MusicPlaybackService::class.java))
     private val controllerFuture = MediaController.Builder(application, sessionToken).buildAsync()
@@ -178,13 +184,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             progressJob?.cancel()
             progressJob = null
             _isPlaying.value = false
+            val failedTrack = controller?.currentMediaItem?.mediaId?.toLongOrNull()?.let(trackIndex::get)
+            lastFailedTrack = failedTrack
             val recovered = controller?.let(::skipFailedTrack) == true
             refreshPlaybackState(forcePersist = true)
-            _playerMessage.value = if (recovered) {
-                "当前音频无法播放，已自动跳过并继续下一首。"
-            } else {
-                "无法播放当前音频。请确认文件仍在设备中且格式受支持。"
-            }
+            val title = failedTrack?.title?.let { "《$it》" } ?: "当前音频"
+            _playerMessage.value = PlayerFeedback(
+                text = if (recovered) {
+                    "$title 无法播放，已自动跳过并继续下一首。"
+                } else {
+                    "$title 无法播放。请确认文件仍在设备中且格式受支持。"
+                },
+                actionLabel = failedTrack?.let { "重试" }
+            )
         }
     }
 
@@ -208,7 +220,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     play(it)
                 }
             }.onFailure {
-                _playerMessage.value = "播放器服务连接失败，请重新打开应用后重试。"
+                _playerMessage.value = PlayerFeedback("播放器服务连接失败，请重新打开应用后重试。")
             }
         }, ContextCompat.getMainExecutor(application))
     }
@@ -366,11 +378,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         updateQueueState(reconciledQueue)
-        _playerMessage.value = if (reconciledQueue.isEmpty()) {
-            "媒体库更新后，播放队列中的文件已不可用。"
-        } else {
-            "媒体库更新后，已从播放队列移除 ${removedCount} 首不可用音频。"
-        }
+        _playerMessage.value = PlayerFeedback(
+            if (reconciledQueue.isEmpty()) {
+                "媒体库更新后，播放队列中的文件已不可用。"
+            } else {
+                "媒体库更新后，已从播放队列移除 ${removedCount} 首不可用音频。"
+            }
+        )
     }
 
     private fun startMediaStoreObservation() {
@@ -648,6 +662,25 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _playerMessage.value = null
     }
 
+    /** Retries the most recently failed track without weakening automatic skip protection for other files. */
+    fun retryLastFailedTrack(): Boolean {
+        val track = lastFailedTrack ?: return false
+        failedTrackIds.remove(track.id)
+        val activeController = controller
+        if (activeController != null && activeController.currentMediaItem?.mediaId == track.id.toString()) {
+            // 单曲或队列已耗尽时，控制器仍可能停在错误媒体项；必须重新 prepare 才能真正重试。
+            resetTimelineForTrackId(track.id.toString())
+            activeController.prepare()
+            startOrResume(activeController, forceFadeIn = true)
+            _currentTrack.value = track
+            _isPlaying.value = true
+        } else {
+            play(track)
+        }
+        _playerMessage.value = PlayerFeedback("正在重新尝试《${track.title}》。")
+        return true
+    }
+
     fun seekTo(positionMs: Long) {
         controller?.seekTo(positionMs.coerceIn(0L, _durationMs.value.coerceAtLeast(0L)))
         refreshPlaybackState()
@@ -740,7 +773,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 controller?.let { activeController ->
                     fadeOutThen(activeController) { activeController.pause() }
                 }
-                _playerMessage.value = "睡眠定时已结束，已暂停播放。"
+                _playerMessage.value = PlayerFeedback("睡眠定时已结束，已暂停播放。")
                 viewModelScope.launch { preferencesRepository.saveSleepTimerEndEpochMs(0L) }
             }
             return
@@ -753,7 +786,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     controller?.let { activeController ->
                         fadeOutThen(activeController) { activeController.pause() }
                     }
-                    _playerMessage.value = "睡眠定时已结束，已暂停播放。"
+                    _playerMessage.value = PlayerFeedback("睡眠定时已结束，已暂停播放。")
                     preferencesRepository.saveSleepTimerEndEpochMs(0L)
                     break
                 }

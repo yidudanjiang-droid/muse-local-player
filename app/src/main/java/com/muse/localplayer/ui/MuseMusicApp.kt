@@ -84,6 +84,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -181,9 +182,15 @@ fun MuseMusicApp(
     }
     val compactLayout = LocalConfiguration.current.screenWidthDp < 600
     LaunchedEffect(playerMessage) {
-        playerMessage?.let { message ->
-            snackbarHostState.showSnackbar(message)
+        playerMessage?.let { feedback ->
+            val result = snackbarHostState.showSnackbar(
+                message = feedback.text,
+                actionLabel = feedback.actionLabel
+            )
             viewModel.dismissPlayerMessage()
+            if (result == SnackbarResult.ActionPerformed && feedback.actionLabel != null) {
+                viewModel.retryLastFailedTrack()
+            }
         }
     }
     val destinations = remember {
