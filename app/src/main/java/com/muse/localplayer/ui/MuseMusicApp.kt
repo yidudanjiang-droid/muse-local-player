@@ -356,6 +356,7 @@ fun MuseMusicApp(
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRescan = viewModel::reloadLibrary,
                     onPlay = viewModel::play,
+                    onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                     onAddTracksToQueue = { tracksToAdd ->
                         val addedCount = viewModel.addTracksToQueue(tracksToAdd)
                         scope.launch {
@@ -403,6 +404,7 @@ fun MuseMusicApp(
                             onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
                             onPlay = viewModel::play,
+                            onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                             onAddTracksToQueue = { tracksToAdd ->
                                 val addedCount = viewModel.addTracksToQueue(tracksToAdd)
                                 scope.launch {
@@ -620,6 +622,7 @@ internal fun HomeScreen(
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
+    onPlayFeaturedTracks: () -> Unit,
     onSongsClick: () -> Unit,
     onMore: (Track) -> Unit
 ) {
@@ -651,7 +654,7 @@ internal fun HomeScreen(
                 metadata = featuredMetadata,
                 trackCount = featuredTracks.size,
                 totalDurationMs = featuredDuration,
-                onPlay = featuredTracks.firstOrNull()?.let { { onPlay(it) } }
+                onPlay = if (featuredTracks.isEmpty()) null else onPlayFeaturedTracks
             )
         }
         item {
@@ -676,7 +679,7 @@ internal fun HomeScreen(
         if (featuredTracks.isEmpty()) {
             item { EmptyFeaturedAudioCard(featuredMetadata) }
         } else {
-            item { SectionHeader("专题曲目", "全部播放") { onPlay(featuredTracks.first()) } }
+            item { SectionHeader("专题曲目", "全部播放", onPlayFeaturedTracks) }
             items(featuredTracks, key = { it.id }) { track ->
                 TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
             }

@@ -371,6 +371,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _isPlaying.value = true
     }
 
+    /** Starts the packaged featured collection in its repository order, independent of any previous queue. */
+    fun playFeaturedTracks() {
+        val featuredQueue = _featuredTracks.value
+        if (featuredQueue.isEmpty()) return
+        setQueue(featuredQueue, featuredQueue.first(), shouldPlay = true)
+    }
+
     fun playQueueItem(index: Int) {
         val activeController = controller ?: return
         val currentQueue = _queue.value

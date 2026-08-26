@@ -32,6 +32,7 @@ internal fun LibraryContent(
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
+    onPlayFeaturedTracks: () -> Unit,
     onAddTracksToQueue: (List<Track>) -> Unit,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
     onShowSongs: () -> Unit,
@@ -68,6 +69,7 @@ internal fun LibraryContent(
             onRequestNotificationPermission = onRequestNotificationPermission,
             onRescan = onRescan,
             onPlay = onPlay,
+            onPlayFeaturedTracks = onPlayFeaturedTracks,
             onSongsClick = onShowSongs,
             onMore = onMore
         )
