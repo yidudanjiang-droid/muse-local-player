@@ -61,6 +61,19 @@ class UserPreferencesRepository(private val context: Context) {
         preferences[KEY_FADE_TRANSITIONS] ?: true
     }
 
+    val playbackHistoryIds: Flow<List<Long>> = preferences.map { preferences ->
+        preferences[KEY_PLAYBACK_HISTORY]
+            .orEmpty()
+            .split(",")
+            .mapNotNull { it.toLongOrNull() }
+            .distinct()
+            .take(HISTORY_LIMIT)
+    }
+
+    val sleepTimerEndEpochMs: Flow<Long> = preferences.map { preferences ->
+        preferences[KEY_SLEEP_TIMER_END_EPOCH_MS] ?: 0L
+    }
+
     val playbackResumeState: Flow<PlaybackResumeState> = preferences.map { preferences ->
         PlaybackResumeState(
             trackId = preferences[KEY_RESUME_TRACK_ID],
@@ -113,6 +126,30 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun recordPlayback(trackId: Long) {
+        context.musePreferences.edit { preferences ->
+            val history = preferences[KEY_PLAYBACK_HISTORY]
+                .orEmpty()
+                .split(",")
+                .mapNotNull { it.toLongOrNull() }
+                .filterNot { it == trackId }
+                .toMutableList()
+            history.add(0, trackId)
+            preferences[KEY_PLAYBACK_HISTORY] = history.take(HISTORY_LIMIT).joinToString(",")
+        }
+    }
+
+    suspend fun clearPlaybackHistory() {
+        context.musePreferences.edit { preferences -> preferences.remove(KEY_PLAYBACK_HISTORY) }
+    }
+
+    suspend fun saveSleepTimerEndEpochMs(endEpochMs: Long) {
+        context.musePreferences.edit { preferences ->
+            if (endEpochMs > 0L) preferences[KEY_SLEEP_TIMER_END_EPOCH_MS] = endEpochMs
+            else preferences.remove(KEY_SLEEP_TIMER_END_EPOCH_MS)
+        }
+    }
+
     suspend fun savePlaybackResumeState(trackId: Long?, positionMs: Long) {
         context.musePreferences.edit { preferences ->
             if (trackId == null) {
@@ -133,7 +170,10 @@ class UserPreferencesRepository(private val context: Context) {
         private val KEY_PLAYBACK_SPEED = floatPreferencesKey("playback_speed")
         private val KEY_MIXING_PLAYBACK = booleanPreferencesKey("mixing_playback_enabled")
         private val KEY_FADE_TRANSITIONS = booleanPreferencesKey("fade_transitions_enabled")
+        private val KEY_PLAYBACK_HISTORY = stringPreferencesKey("playback_history")
+        private val KEY_SLEEP_TIMER_END_EPOCH_MS = longPreferencesKey("sleep_timer_end_epoch_ms")
         private val KEY_RESUME_TRACK_ID = longPreferencesKey("resume_track_id")
         private val KEY_RESUME_POSITION_MS = longPreferencesKey("resume_position_ms")
+        private const val HISTORY_LIMIT = 50
     }
 }

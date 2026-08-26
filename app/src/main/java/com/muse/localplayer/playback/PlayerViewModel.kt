@@ -80,6 +80,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _playbackSpeed = MutableStateFlow(1f)
     val playbackSpeed = _playbackSpeed.asStateFlow()
 
+    private val _playbackHistory = MutableStateFlow<List<Track>>(emptyList())
+    val playbackHistory = _playbackHistory.asStateFlow()
+
+    private val _recentlyAdded = MutableStateFlow<List<Track>>(emptyList())
+    val recentlyAdded = _recentlyAdded.asStateFlow()
+
+    private val _sleepTimerRemainingMs = MutableStateFlow(0L)
+    val sleepTimerRemainingMs = _sleepTimerRemainingMs.asStateFlow()
+
     private val _mixingPlaybackEnabled = MutableStateFlow(false)
     val mixingPlaybackEnabled = _mixingPlaybackEnabled.asStateFlow()
 
@@ -95,6 +104,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var controller: MediaController? = null
     private var progressJob: Job? = null
     private var fadeJob: Job? = null
+    private var sleepTimerJob: Job? = null
     private var libraryScanJob: Job? = null
     private var mediaStoreObserverJob: Job? = null
     private var pendingTrack: Track? = null
@@ -106,6 +116,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var tracksBySource: Map<TrackSource, List<Track>> = emptyMap()
     private var timelineTrackId: String? = null
     private var stableDurationMs: Long = 0L
+    private var playbackHistoryIds: List<Long> = emptyList()
     private val sessionToken = SessionToken(application, ComponentName(application, MusicPlaybackService::class.java))
     private val controllerFuture = MediaController.Builder(application, sessionToken).buildAsync()
 
@@ -124,6 +135,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             resetTimelineFor(mediaItem)
             syncCurrentTrack(mediaItem)
+            mediaItem?.mediaId?.toLongOrNull()?.let(::recordPlayback)
             refreshPlaybackState(forcePersist = true)
         }
 
@@ -219,6 +231,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
+            preferencesRepository.playbackHistoryIds.collect { ids ->
+                playbackHistoryIds = ids
+                refreshPlaybackHistory()
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.sleepTimerEndEpochMs.collect(::scheduleSleepTimer)
+        }
+        viewModelScope.launch {
             preferencesRepository.queueIds.collect { savedQueueIds ->
                 restoredQueueIds = savedQueueIds
                 restoreSavedQueueIfPossible()
@@ -281,6 +302,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         trackIndex = allTracks.associateBy(Track::id)
         tracksBySource = allTracks.groupBy(Track::source)
         _tracks.value = allTracks
+        _recentlyAdded.value = deviceTracks
+            .sortedByDescending(Track::dateAddedSeconds)
+            .take(8)
+        refreshPlaybackHistory()
     }
 
     private fun startMediaStoreObservation() {
@@ -504,6 +529,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { preferencesRepository.savePlaybackSpeed(safeSpeed) }
     }
 
+    fun setSleepTimer(minutes: Int) {
+        if (minutes <= 0) {
+            cancelSleepTimer()
+            return
+        }
+        val endEpochMs = System.currentTimeMillis() + minutes.coerceIn(1, MAX_SLEEP_TIMER_MINUTES) * 60_000L
+        scheduleSleepTimer(endEpochMs)
+        viewModelScope.launch { preferencesRepository.saveSleepTimerEndEpochMs(endEpochMs) }
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimerRemainingMs.value = 0L
+        viewModelScope.launch { preferencesRepository.saveSleepTimerEndEpochMs(0L) }
+    }
+
+    fun clearPlaybackHistory() {
+        viewModelScope.launch { preferencesRepository.clearPlaybackHistory() }
+    }
+
     fun setMixingPlaybackEnabled(enabled: Boolean) {
         _mixingPlaybackEnabled.value = enabled
         controller?.let(::applyAudioFocusPolicy)
@@ -525,6 +571,44 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun isFavorite(track: Track): Boolean = track.id in _favoriteIds.value
+
+    private fun recordPlayback(trackId: Long) {
+        viewModelScope.launch { preferencesRepository.recordPlayback(trackId) }
+    }
+
+    private fun refreshPlaybackHistory() {
+        _playbackHistory.value = playbackHistoryIds.mapNotNull(trackIndex::get)
+    }
+
+    private fun scheduleSleepTimer(endEpochMs: Long) {
+        sleepTimerJob?.cancel()
+        if (endEpochMs <= System.currentTimeMillis()) {
+            _sleepTimerRemainingMs.value = 0L
+            if (endEpochMs > 0L) {
+                controller?.let { activeController ->
+                    fadeOutThen(activeController) { activeController.pause() }
+                }
+                _playerMessage.value = "睡眠定时已结束，已暂停播放。"
+                viewModelScope.launch { preferencesRepository.saveSleepTimerEndEpochMs(0L) }
+            }
+            return
+        }
+        sleepTimerJob = viewModelScope.launch {
+            while (isActive) {
+                val remaining = (endEpochMs - System.currentTimeMillis()).coerceAtLeast(0L)
+                _sleepTimerRemainingMs.value = remaining
+                if (remaining == 0L) {
+                    controller?.let { activeController ->
+                        fadeOutThen(activeController) { activeController.pause() }
+                    }
+                    _playerMessage.value = "睡眠定时已结束，已暂停播放。"
+                    preferencesRepository.saveSleepTimerEndEpochMs(0L)
+                    break
+                }
+                delay(minOf(SLEEP_TIMER_TICK_MS, remaining))
+            }
+        }
+    }
 
     private fun transitionToQueue(
         activeController: MediaController,
@@ -718,6 +802,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         progressJob = null
         fadeJob?.cancel()
         fadeJob = null
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
         controller?.volume = DEFAULT_PLAYER_VOLUME
         libraryScanJob?.cancel()
         stopMediaStoreObservation()
@@ -754,6 +840,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val DEFAULT_PLAYER_VOLUME = 1f
         const val FADE_STEPS = 8
         const val FADE_STEP_DELAY_MS = 35L
+        const val SLEEP_TIMER_TICK_MS = 1_000L
+        const val MAX_SLEEP_TIMER_MINUTES = 180
         const val MIN_VALID_DURATION_MS = 1_000L
     }
 }

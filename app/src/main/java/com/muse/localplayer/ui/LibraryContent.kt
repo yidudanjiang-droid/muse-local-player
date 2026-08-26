@@ -22,6 +22,12 @@ internal fun LibraryContent(
     contentPadding: PaddingValues,
     audioPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
+    playbackHistory: List<Track>,
+    recentlyAdded: List<Track>,
+    sleepTimerRemainingMs: Long,
+    onSetSleepTimer: (Int) -> Unit,
+    onCancelSleepTimer: () -> Unit,
+    onClearPlaybackHistory: () -> Unit,
     onRequestPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
@@ -51,6 +57,12 @@ internal fun LibraryContent(
             contentPadding = contentPadding,
             audioPermissionGranted = audioPermissionGranted,
             notificationPermissionGranted = notificationPermissionGranted,
+            playbackHistory = playbackHistory,
+            recentlyAdded = recentlyAdded,
+            sleepTimerRemainingMs = sleepTimerRemainingMs,
+            onSetSleepTimer = onSetSleepTimer,
+            onCancelSleepTimer = onCancelSleepTimer,
+            onClearPlaybackHistory = onClearPlaybackHistory,
             onRequestPermission = onRequestPermission,
             onRequestNotificationPermission = onRequestNotificationPermission,
             onRescan = onRescan,
@@ -79,6 +91,7 @@ internal fun LibraryContent(
             favoriteTracks = favoriteTracks,
             contentPadding = contentPadding,
             onPlay = onPlay,
+            onPlayAll = { onPlayAlbum(favoriteTracks, favoriteTracks.firstOrNull()) },
             onMore = onMore
         )
     }

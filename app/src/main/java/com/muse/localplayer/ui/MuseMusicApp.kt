@@ -146,6 +146,9 @@ fun MuseMusicApp(
     val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
     val mixingPlaybackEnabled by viewModel.mixingPlaybackEnabled.collectAsStateWithLifecycle()
     val fadeTransitionsEnabled by viewModel.fadeTransitionsEnabled.collectAsStateWithLifecycle()
+    val playbackHistory by viewModel.playbackHistory.collectAsStateWithLifecycle()
+    val recentlyAdded by viewModel.recentlyAdded.collectAsStateWithLifecycle()
+    val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsStateWithLifecycle()
     val playerMessage by viewModel.playerMessage.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
@@ -340,6 +343,12 @@ fun MuseMusicApp(
                     contentPadding = paddingValues,
                     audioPermissionGranted = audioPermissionGranted,
                     notificationPermissionGranted = notificationPermissionGranted,
+                    playbackHistory = playbackHistory,
+                    recentlyAdded = recentlyAdded,
+                    sleepTimerRemainingMs = sleepTimerRemainingMs,
+                    onSetSleepTimer = viewModel::setSleepTimer,
+                    onCancelSleepTimer = viewModel::cancelSleepTimer,
+                    onClearPlaybackHistory = viewModel::clearPlaybackHistory,
                     onRequestPermission = onRequestAudioPermission,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRescan = viewModel::reloadLibrary,
@@ -373,6 +382,12 @@ fun MuseMusicApp(
                             contentPadding = PaddingValues(),
                             audioPermissionGranted = audioPermissionGranted,
                             notificationPermissionGranted = notificationPermissionGranted,
+                            playbackHistory = playbackHistory,
+                            recentlyAdded = recentlyAdded,
+                            sleepTimerRemainingMs = sleepTimerRemainingMs,
+                            onSetSleepTimer = viewModel::setSleepTimer,
+                            onCancelSleepTimer = viewModel::cancelSleepTimer,
+                            onClearPlaybackHistory = viewModel::clearPlaybackHistory,
                             onRequestPermission = onRequestAudioPermission,
                             onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
@@ -523,6 +538,12 @@ internal fun HomeScreen(
     contentPadding: PaddingValues,
     audioPermissionGranted: Boolean,
     notificationPermissionGranted: Boolean,
+    playbackHistory: List<Track>,
+    recentlyAdded: List<Track>,
+    sleepTimerRemainingMs: Long,
+    onSetSleepTimer: (Int) -> Unit,
+    onCancelSleepTimer: () -> Unit,
+    onClearPlaybackHistory: () -> Unit,
     onRequestPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
@@ -560,6 +581,25 @@ internal fun HomeScreen(
                 totalDurationMs = featuredDuration,
                 onPlay = featuredTracks.firstOrNull()?.let { { onPlay(it) } }
             )
+        }
+        item {
+            SleepTimerCard(
+                remainingMs = sleepTimerRemainingMs,
+                onSetTimer = onSetSleepTimer,
+                onCancelTimer = onCancelSleepTimer
+            )
+        }
+        if (playbackHistory.isNotEmpty()) {
+            item { SectionHeader("最近播放", "清空", onClearPlaybackHistory) }
+            items(playbackHistory.take(HOME_PREVIEW_LIMIT), key = { "history_${it.id}" }) { track ->
+                TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
+            }
+        }
+        if (recentlyAdded.isNotEmpty()) {
+            item { SectionHeader("最近加入", "设备资料库", onSongsClick) }
+            items(recentlyAdded, key = { "recent_${it.id}" }) { track ->
+                TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
+            }
         }
         if (featuredTracks.isEmpty()) {
             item { EmptyFeaturedAudioCard(featuredMetadata) }
@@ -641,6 +681,42 @@ private fun EmptyFeaturedAudioCard(metadata: FeaturedPackMetadata) {
             Text("${metadata.title} 尚未加入音频", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
             Text("在 app/src/main/assets/featured_audio/ 放入 MP3、M4A、AAC、OGG、WAV 或 FLAC 文件。应用会在构建后自动扫描并展示它们，无需请求手机存储权限。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SleepTimerCard(
+    remainingMs: Long,
+    onSetTimer: (Int) -> Unit,
+    onCancelTimer: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("睡眠定时", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (remainingMs > 0L) "将在 ${formatTime(remainingMs)} 后平滑暂停播放" else "设置后将自动平滑暂停，适合睡前收听",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.78f)
+                    )
+                }
+                if (remainingMs > 0L) TextButton(onClick = onCancelTimer) { Text("关闭") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(15, 30, 60).forEach { minutes ->
+                    AssistChip(
+                        onClick = { onSetTimer(minutes) },
+                        label = { Text("${minutes} 分钟") },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                    )
+                }
+            }
         }
     }
 }
@@ -973,6 +1049,7 @@ internal fun FavoritesScreen(
     favoriteTracks: List<Track>,
     contentPadding: PaddingValues,
     onPlay: (Track) -> Unit,
+    onPlayAll: () -> Unit,
     onMore: (Track) -> Unit
 ) {
     if (favoriteTracks.isEmpty()) {
@@ -1000,6 +1077,12 @@ internal fun FavoritesScreen(
                 Text("收藏", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(4.dp))
                 Text("${favoriteTracks.size} 首你喜欢的音乐", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(12.dp))
+                FilledTonalButton(onClick = onPlayAll) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("播放全部收藏")
+                }
                 Spacer(Modifier.height(12.dp))
             }
             items(favoriteTracks, key = { it.id }) { track ->
@@ -1130,6 +1213,8 @@ private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit) {
         modifier = Modifier.clip(MaterialTheme.shapes.medium).clickable(onClick = onClick)
     )
 }
+
+private const val HOME_PREVIEW_LIMIT = 6
 
 private enum class SongSortMode(val label: String) {
     TITLE("标题"),
