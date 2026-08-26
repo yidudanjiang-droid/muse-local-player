@@ -1,6 +1,12 @@
 package com.muse.localplayer.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
@@ -101,8 +107,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -1575,13 +1584,25 @@ private fun PlayerSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         dragHandle = { BottomSheetDefaults.DragHandle() },
-        containerColor = MaterialTheme.colorScheme.surface
+        containerColor = Color.Transparent,
+        contentColor = Color.White
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, bottom = 30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            DynamicPlaybackAtmosphere(
+                isPlaying = isPlaying,
+                modifier = Modifier.matchParentSize()
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xD9121A31))
+                    .padding(start = 28.dp, end = 28.dp, bottom = 30.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("正在播放", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(track.album, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(track.album, style = MaterialTheme.typography.bodySmall, color = Color(0xFFD6E1F6), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 TextButton(onClick = { speedMenuExpanded = true }) { Text("${formatSpeed(playbackSpeed)}×") }
                 DropdownMenu(expanded = speedMenuExpanded, onDismissRequest = { speedMenuExpanded = false }) {
@@ -1605,7 +1626,7 @@ private fun PlayerSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(track.title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(4.dp))
-                    Text(track.artist, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(track.artist, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD6E1F6), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = onToggleFavorite) {
                     Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = if (isFavorite) "取消收藏" else "加入收藏", tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1629,13 +1650,13 @@ private fun PlayerSheet(
                 Text(
                     if (durationMs > 0L) formatTime(if (isSeeking) (durationMs * scrubProgress).toLong() else positionMs) else "—:—",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = Color(0xFFD6E1F6)
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
                     if (durationMs > 0L) formatTime(durationMs) else "正在读取时长",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = Color(0xFFD6E1F6)
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -1715,12 +1736,12 @@ private fun PlayerSheet(
             Text(
                 if (mixingPlaybackEnabled) "混音开启：Muse 不会抢占其他应用的音频焦点，可与其他声音同时播放。" else "独占播放：Muse 会按系统音频焦点规则协调其他应用。",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color(0xFFD6E1F6)
             )
             Text(
                 if (fadeTransitionsEnabled) "淡化开启：在应用内切歌、上一首、下一首和暂停时使用约 280ms 的淡入淡出。" else "淡化关闭：切歌与暂停立即执行。",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color(0xFFD6E1F6)
             )
             Spacer(Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1729,7 +1750,7 @@ private fun PlayerSheet(
                     Text(
                         if (sleepTimerRemainingMs > 0L) "将在 ${formatTime(sleepTimerRemainingMs)} 后平滑暂停" else "未设置自动暂停",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color(0xFFD6E1F6)
                     )
                 }
                 if (sleepTimerRemainingMs > 0L) {
@@ -1745,9 +1766,78 @@ private fun PlayerSheet(
             Text(
                 playbackStrategy.description,
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color(0xFFD6E1F6)
             )
+            }
         }
+    }
+}
+
+@Composable
+private fun DynamicPlaybackAtmosphere(isPlaying: Boolean, modifier: Modifier = Modifier) {
+    val atmosphere = rememberInfiniteTransition(label = "playbackAtmosphere")
+    val drift by atmosphere.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 14_000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "atmosphereDrift"
+    )
+    val glow by atmosphere.animateFloat(
+        initialValue = 0.34f,
+        targetValue = 0.72f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 5_800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "atmosphereGlow"
+    )
+    val motion = if (isPlaying) drift else 0.5f
+    val glowAlpha = if (isPlaying) glow else 0.26f
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF071127))
+    ) {
+        Image(
+            painter = painterResource(R.drawable.muse_playback_atmosphere),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.08f + motion * 0.05f
+                    scaleY = 1.08f + motion * 0.05f
+                    translationX = (motion - 0.5f) * 34f
+                    translationY = (0.5f - motion) * 46f
+                }
+                .alpha(if (isPlaying) 0.94f else 0.72f)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color(0x73030718),
+                        0.45f to Color(0x22030718),
+                        1f to Color(0xB8070B18)
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color(0x443B8EFF).copy(alpha = glowAlpha),
+                            Color.Transparent
+                        )
+                    )
+                )
+        )
     }
 }
 
