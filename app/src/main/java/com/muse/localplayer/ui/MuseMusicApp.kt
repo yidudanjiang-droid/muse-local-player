@@ -570,7 +570,7 @@ private fun NavigationDrawerHeader() {
                 color = MaterialTheme.colorScheme.primaryContainer
             ) {
                 Image(
-                    painter = painterResource(R.mipmap.ic_muse_launcher),
+                    painter = painterResource(R.drawable.ic_muse_brand_mark),
                     contentDescription = "Muse 图标",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
@@ -1744,7 +1744,7 @@ private fun AboutSheet(onDismiss: () -> Unit) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 12.dp)) {
             Surface(modifier = Modifier.size(64.dp), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.primaryContainer) {
                 Image(
-                    painter = painterResource(R.mipmap.ic_muse_launcher),
+                    painter = painterResource(R.drawable.ic_muse_brand_mark),
                     contentDescription = "Muse 图标",
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
