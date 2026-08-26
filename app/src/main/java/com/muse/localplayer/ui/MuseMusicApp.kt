@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -1697,12 +1698,26 @@ private fun QueueSheet(
     onMove: (Int, Int) -> Unit,
     onClear: () -> Unit
 ) {
+    val listState = rememberLazyListState()
+    val currentIndex = remember(queue, currentTrack?.id) {
+        queue.indexOfFirst { it.id == currentTrack?.id }
+    }
+    LaunchedEffect(queue, currentTrack?.id) {
+        if (currentIndex >= 0) {
+            // 当前项上方保留分段标题，打开队列后直接落在正在播放区域。
+            listState.scrollToItem(if (currentIndex > 0) currentIndex + 1 else 0)
+        }
+    }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("播放队列", style = MaterialTheme.typography.headlineSmall)
-                    Text(if (queue.isEmpty()) "队列为空" else "${queue.size} 首歌曲", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (queue.isEmpty()) "队列为空" else "${queue.size} 首歌曲${if (currentIndex >= 0) " · 正在播放第 ${currentIndex + 1} 首" else ""}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 if (queue.isNotEmpty()) TextButton(onClick = onClear) { Text("清空队列") }
             }
@@ -1710,31 +1725,105 @@ private fun QueueSheet(
             if (queue.isEmpty()) {
                 Text("从歌曲菜单中选择“加入播放队列”，即可在这里管理播放顺序。", modifier = Modifier.padding(vertical = 24.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                LazyColumn(contentPadding = PaddingValues(bottom = 26.dp)) {
-                    items(queue.withIndex().toList(), key = { it.value.id }) { indexedTrack ->
-                        val index = indexedTrack.index
-                        val item = indexedTrack.value
-                        ListItem(
-                            headlineContent = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            supportingContent = { Text(item.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingContent = {
-                                AlbumArt(Modifier.size(48.dp), item.artworkUri, item.title, if (item.id == currentTrack?.id) ArtEmphasis.Primary else ArtEmphasis.Secondary)
-                            },
-                            trailingContent = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { onMove(index, index - 1) }, enabled = index > 0) { Icon(Icons.Default.ArrowUpward, "上移") }
-                                    IconButton(onClick = { onMove(index, index + 1) }, enabled = index < queue.lastIndex) { Icon(Icons.Default.ArrowDownward, "下移") }
-                                    IconButton(onClick = { onRemove(index) }) { Icon(Icons.Default.Delete, "移出队列") }
-                                }
-                            },
-                            colors = ListItemDefaults.colors(containerColor = if (item.id == currentTrack?.id) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent),
-                            modifier = Modifier.clip(MaterialTheme.shapes.medium).clickable { onPlay(index) }
-                        )
+                LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 26.dp)) {
+                    if (currentIndex > 0) {
+                        item(key = "queue_before_current") {
+                            QueueSectionLabel("队列前序")
+                        }
+                        items(queue.take(currentIndex).withIndex().toList(), key = { "queue_before_${it.value.id}" }) { indexedTrack ->
+                            QueueTrackItem(
+                                index = indexedTrack.index,
+                                item = indexedTrack.value,
+                                isCurrent = false,
+                                lastIndex = queue.lastIndex,
+                                onPlay = onPlay,
+                                onMove = onMove,
+                                onRemove = onRemove
+                            )
+                        }
+                    }
+                    if (currentIndex >= 0) {
+                        item(key = "queue_now_playing") {
+                            QueueSectionLabel("正在播放")
+                        }
+                        item(key = "queue_current_${queue[currentIndex].id}") {
+                            QueueTrackItem(
+                                index = currentIndex,
+                                item = queue[currentIndex],
+                                isCurrent = true,
+                                lastIndex = queue.lastIndex,
+                                onPlay = onPlay,
+                                onMove = onMove,
+                                onRemove = onRemove
+                            )
+                        }
+                    }
+                    val nextStartIndex = if (currentIndex >= 0) currentIndex + 1 else 0
+                    if (nextStartIndex < queue.size) {
+                        item(key = "queue_up_next") {
+                            QueueSectionLabel(if (currentIndex >= 0) "接下来" else "播放队列")
+                        }
+                        items(queue.drop(nextStartIndex).withIndex().toList(), key = { "queue_next_${it.value.id}" }) { indexedTrack ->
+                            QueueTrackItem(
+                                index = nextStartIndex + indexedTrack.index,
+                                item = indexedTrack.value,
+                                isCurrent = false,
+                                lastIndex = queue.lastIndex,
+                                onPlay = onPlay,
+                                onMove = onMove,
+                                onRemove = onRemove
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun QueueSectionLabel(label: String) {
+    Text(
+        text = label,
+        modifier = Modifier.padding(top = 12.dp, start = 8.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary
+    )
+}
+
+@Composable
+private fun QueueTrackItem(
+    index: Int,
+    item: Track,
+    isCurrent: Boolean,
+    lastIndex: Int,
+    onPlay: (Int) -> Unit,
+    onMove: (Int, Int) -> Unit,
+    onRemove: (Int) -> Unit
+) {
+    ListItem(
+        headlineContent = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = { Text(item.artist, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingContent = {
+            AlbumArt(
+                Modifier.size(48.dp),
+                item.artworkUri,
+                item.title,
+                if (isCurrent) ArtEmphasis.Primary else ArtEmphasis.Secondary
+            )
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { onMove(index, index - 1) }, enabled = index > 0) { Icon(Icons.Default.ArrowUpward, "上移") }
+                IconButton(onClick = { onMove(index, index + 1) }, enabled = index < lastIndex) { Icon(Icons.Default.ArrowDownward, "下移") }
+                IconButton(onClick = { onRemove(index) }) { Icon(Icons.Default.Delete, "移出队列") }
+            }
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = if (isCurrent) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+        ),
+        modifier = Modifier.clip(MaterialTheme.shapes.medium).clickable { onPlay(index) }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
