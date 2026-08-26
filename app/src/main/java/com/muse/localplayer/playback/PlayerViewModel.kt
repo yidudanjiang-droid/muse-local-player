@@ -20,6 +20,8 @@ import com.muse.localplayer.data.FeaturedAudioRepository
 import com.muse.localplayer.data.FeaturedPackMetadata
 import com.muse.localplayer.data.TrackSource
 import com.muse.localplayer.data.LibraryLoadResult
+import com.muse.localplayer.data.LyricLine
+import com.muse.localplayer.data.LyricsRepository
 import com.muse.localplayer.data.MediaStoreObserver
 import com.muse.localplayer.data.MusicRepository
 import com.muse.localplayer.data.PlaybackResumeState
@@ -45,6 +47,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val musicRepository = MusicRepository(application)
     private val featuredAudioRepository = FeaturedAudioRepository(application)
+    private val lyricsRepository = LyricsRepository(application)
     private val mediaStoreObserver = MediaStoreObserver(application)
     private val preferencesRepository = UserPreferencesRepository(application)
 
@@ -68,6 +71,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _currentTrack = MutableStateFlow<Track?>(null)
     val currentTrack = _currentTrack.asStateFlow()
+
+    private val _currentLyrics = MutableStateFlow<List<LyricLine>>(emptyList())
+    val currentLyrics = _currentLyrics.asStateFlow()
 
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying = _isPlaying.asStateFlow()
@@ -117,6 +123,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var sleepTimerJob: Job? = null
     private var libraryScanJob: Job? = null
     private var mediaStoreObserverJob: Job? = null
+    private var lyricsLoadJob: Job? = null
+    private var lyricsTrackId: Long? = null
     private var pendingTrack: Track? = null
     private var restoredQueueIds: List<Long> = emptyList()
     private var resumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
@@ -360,6 +368,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 activeController.clearMediaItems()
                 resetTimelineForTrackId(null)
                 _currentTrack.value = null
+                loadLyricsFor(null)
                 _isPlaying.value = false
             } else {
                 val resumeIndex = reconciledQueue.indexOfFirst { it.id == previousCurrentId }
@@ -607,6 +616,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lastTrimmedQueueItems = emptyList()
         controller?.clearMediaItems()
         _currentTrack.value = null
+        loadLyricsFor(null)
         _isPlaying.value = false
         resetTimelineForTrackId(null)
         updateQueueState(emptyList())
@@ -903,12 +913,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         activeController.prepare()
         val savedQueueIsStale = restoredQueue.map { it.id } != restoredQueueIds
         updateQueueState(restoredQueue, persist = savedQueueIsStale)
-        _currentTrack.value = restoredQueue.getOrNull(resumeIndex)
+        val restoredTrack = restoredQueue.getOrNull(resumeIndex)
+        _currentTrack.value = restoredTrack
+        loadLyricsFor(restoredTrack)
         refreshPlaybackState()
     }
 
     private fun syncCurrentTrack(mediaItem: MediaItem?) {
-        _currentTrack.value = mediaItem?.mediaId?.toLongOrNull()?.let(trackIndex::get)
+        val track = mediaItem?.mediaId?.toLongOrNull()?.let(trackIndex::get)
+        _currentTrack.value = track
+        loadLyricsFor(track)
+    }
+
+    private fun loadLyricsFor(track: Track?) {
+        if (lyricsTrackId == track?.id) return
+        lyricsTrackId = track?.id
+        lyricsLoadJob?.cancel()
+        lyricsLoadJob = null
+        _currentLyrics.value = emptyList()
+        if (track == null || !track.isFeaturedAsset) return
+        lyricsLoadJob = viewModelScope.launch {
+            _currentLyrics.value = lyricsRepository.loadFeaturedLyrics(track)
+        }
     }
 
     private fun syncQueueFromController(persist: Boolean) {
@@ -1025,6 +1051,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         sleepTimerJob = null
         controller?.volume = DEFAULT_PLAYER_VOLUME
         libraryScanJob?.cancel()
+        lyricsLoadJob?.cancel()
+        lyricsLoadJob = null
         stopMediaStoreObservation()
         controller?.removeListener(playerListener)
         MediaController.releaseFuture(controllerFuture)

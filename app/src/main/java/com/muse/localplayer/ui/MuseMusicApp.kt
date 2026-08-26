@@ -128,6 +128,7 @@ import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.FeaturedPackMetadata
 import com.muse.localplayer.data.LibraryTab
+import com.muse.localplayer.data.LyricLine
 import com.muse.localplayer.data.Track
 import com.muse.localplayer.playback.LibraryUiState
 import com.muse.localplayer.playback.PlayerViewModel
@@ -1516,12 +1517,14 @@ private fun PlayerSheetWithProgress(
     val progress by viewModel.playbackProgress.collectAsStateWithLifecycle()
     val positionMs by viewModel.positionMs.collectAsStateWithLifecycle()
     val durationMs by viewModel.durationMs.collectAsStateWithLifecycle()
+    val lyrics by viewModel.currentLyrics.collectAsStateWithLifecycle()
     PlayerSheet(
         track = track,
         isPlaying = isPlaying,
         progress = progress,
         positionMs = positionMs,
         durationMs = durationMs,
+        lyrics = lyrics,
         repeatMode = repeatMode,
         shuffleEnabled = shuffleEnabled,
         playbackSpeed = playbackSpeed,
@@ -1553,6 +1556,7 @@ private fun PlayerSheet(
     progress: Float,
     positionMs: Long,
     durationMs: Long,
+    lyrics: List<LyricLine>,
     repeatMode: Int,
     shuffleEnabled: Boolean,
     playbackSpeed: Float,
@@ -1620,8 +1624,21 @@ private fun PlayerSheet(
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "关闭播放页") }
             }
             Spacer(Modifier.height(20.dp))
-            AlbumArt(Modifier.fillMaxWidth().aspectRatio(1f), track.artworkUri, track.title, ArtEmphasis.Primary)
-            Spacer(Modifier.height(28.dp))
+            AlbumArt(
+                modifier = if (lyrics.isEmpty()) {
+                    Modifier.fillMaxWidth().aspectRatio(1f)
+                } else {
+                    Modifier.fillMaxWidth().height(224.dp)
+                },
+                artworkUri = track.artworkUri,
+                seed = track.title,
+                emphasis = ArtEmphasis.Primary
+            )
+            if (lyrics.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                LyricsStage(lyrics = lyrics, positionMs = positionMs)
+            }
+            Spacer(Modifier.height(if (lyrics.isEmpty()) 28.dp else 18.dp))
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(track.title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1768,6 +1785,42 @@ private fun PlayerSheet(
                 style = MaterialTheme.typography.labelMedium,
                 color = Color(0xFFD6E1F6)
             )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsStage(lyrics: List<LyricLine>, positionMs: Long) {
+    val activeIndex = lyrics.indexOfLast { it.timestampMs <= positionMs }
+    val anchorIndex = activeIndex.coerceAtLeast(0)
+    val visibleLines = (anchorIndex - 1..anchorIndex + 1)
+        .mapNotNull(lyrics::getOrNull)
+        .distinctBy { it.timestampMs to it.text }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = Color(0x4526335C)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(
+                "离线逐行歌词",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFFD6E1F6)
+            )
+            visibleLines.forEach { line ->
+                val isActive = activeIndex >= 0 && line.timestampMs == lyrics.getOrNull(activeIndex)?.timestampMs
+                Text(
+                    line.text,
+                    style = if (isActive) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
+                    color = if (isActive) Color.White else Color(0xFFBDCAE4),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
