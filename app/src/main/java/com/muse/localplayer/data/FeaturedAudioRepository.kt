@@ -279,7 +279,7 @@ class FeaturedAudioRepository(private val context: Context) {
     private fun featuredArtworkUri(pack: FeaturedPackMetadata): Uri {
         val configuredPath = resolveCoverAssetPath(pack.coverAssetPath)
         return configuredPath?.let { Uri.parse("file:///android_asset/$it") }
-            ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.featured_audio_cover}")
+            ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.muse_featured_hero}")
     }
 
     private fun resolveCoverAssetPath(rawPath: String?): String? {

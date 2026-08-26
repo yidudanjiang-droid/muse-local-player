@@ -726,7 +726,7 @@ private fun FeaturedPackageHero(
         Box(modifier = Modifier.fillMaxSize()) {
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
-                    .data(artworkUri ?: R.drawable.featured_audio_cover)
+                    .data(artworkUri ?: R.drawable.muse_featured_hero)
                     .size(640)
                     .memoryCacheKey("featured_hero_${artworkUri ?: "default"}")
                     .diskCacheKey("featured_hero_${artworkUri ?: "default"}")
@@ -1400,13 +1400,25 @@ private fun AlbumArt(modifier: Modifier, artworkUri: android.net.Uri?, seed: Str
     }
     Surface(modifier = modifier, shape = MaterialTheme.shapes.medium, color = palette.first) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.MusicNote, contentDescription = null, tint = palette.second, modifier = Modifier.size(26.dp))
             if (artworkUri != null) {
                 AsyncImage(
                     model = artworkRequest,
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
+                )
+            } else {
+                Image(
+                    painter = painterResource(R.drawable.muse_default_album_art),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                Icon(
+                    Icons.Default.MusicNote,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.82f),
+                    modifier = Modifier.size(26.dp)
                 )
             }
         }

@@ -88,7 +88,7 @@ fun MuseLaunchSplash(onFinished: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Image(
-            painter = painterResource(R.drawable.splash_6g_cloud_bg),
+            painter = painterResource(R.drawable.muse_launch_cloud_atmosphere),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -105,9 +105,9 @@ fun MuseLaunchSplash(onFinished: () -> Unit) {
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to Color(0x33010235),
-                        0.44f to Color(0x12010235),
-                        1f to Color(0x70010235)
+                        0f to Color(0x4A010235),
+                        0.42f to Color(0x15010235),
+                        1f to Color(0x82010235)
                     )
                 )
         )
