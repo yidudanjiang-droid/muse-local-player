@@ -20,6 +20,7 @@ class FeaturedAudioRepository(private val context: Context) {
     suspend fun loadPack(): FeaturedAudioPack = withContext(Dispatchers.IO) {
         clearStaleMaterializedAssets()
         val configuration = readPackConfiguration()
+        val artworkUri = featuredArtworkUri(configuration.metadata)
         val tracks = listAudioAssetPaths()
             .mapNotNull { assetPath ->
                 // 二次打包时单个文件损坏、标签异常或缓存准备失败，不应让整个专题消失。
@@ -27,7 +28,8 @@ class FeaturedAudioRepository(private val context: Context) {
                     assetPath to assetPath.toFeaturedTrack(
                         pack = configuration.metadata,
                         override = configuration.trackOverrides[assetPath]
-                            ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
+                            ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")],
+                        artworkUri = artworkUri
                     )
                 }.getOrNull()
             }
@@ -53,7 +55,8 @@ class FeaturedAudioRepository(private val context: Context) {
                     description = json.textOrDefault("description", DEFAULT_DESCRIPTION),
                     defaultArtist = json.textOrDefault("defaultArtist", DEFAULT_ARTIST),
                     defaultAlbum = json.textOrDefault("defaultAlbum", DEFAULT_ALBUM),
-                    playLabel = json.textOrDefault("playLabel", DEFAULT_PLAY_LABEL)
+                    playLabel = json.textOrDefault("playLabel", DEFAULT_PLAY_LABEL),
+                    coverAssetPath = json.optionalText("coverAsset")
                 ),
                 trackOverrides = json.trackOverrides()
             )
@@ -102,7 +105,11 @@ class FeaturedAudioRepository(private val context: Context) {
         }
     }
 
-    private fun String.toFeaturedTrack(pack: FeaturedPackMetadata, override: TrackOverride?): Track {
+    private fun String.toFeaturedTrack(
+        pack: FeaturedPackMetadata,
+        override: TrackOverride?,
+        artworkUri: Uri
+    ): Track {
         val fileName = substringAfterLast('/').substringBeforeLast('.')
         val fallbackTitle = fileName
             .replace(Regex("^\\s*\\d+[._ -]*"), "")
@@ -122,7 +129,7 @@ class FeaturedAudioRepository(private val context: Context) {
             albumId = -abs(albumTitle.hashCode().toLong()) - 2L,
             durationMs = metadata.durationMs,
             uri = resolvePlayableUri(this),
-            artworkUri = featuredArtworkUri,
+            artworkUri = artworkUri,
             trackNumber = override?.trackNumber ?: metadata.trackNumber ?: fallbackTrackNumber,
             year = override?.year ?: metadata.year ?: 0,
             source = TrackSource.FEATURED_ASSET
@@ -269,8 +276,30 @@ class FeaturedAudioRepository(private val context: Context) {
         val year: Int? = null
     )
 
-    private val featuredArtworkUri: Uri
-        get() = Uri.parse("android.resource://${context.packageName}/${R.drawable.featured_audio_cover}")
+    private fun featuredArtworkUri(pack: FeaturedPackMetadata): Uri {
+        val configuredPath = resolveCoverAssetPath(pack.coverAssetPath)
+        return configuredPath?.let { Uri.parse("file:///android_asset/$it") }
+            ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.featured_audio_cover}")
+    }
+
+    private fun resolveCoverAssetPath(rawPath: String?): String? {
+        val normalized = rawPath
+            ?.trim()
+            ?.replace('\\', '/')
+            ?.removePrefix("./")
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val candidates = buildList {
+            add(normalized)
+            if (!normalized.startsWith("$FEATURED_AUDIO_ROOT/")) {
+                add("$FEATURED_AUDIO_ROOT/$normalized")
+            }
+        }
+        return candidates.firstOrNull { candidate ->
+            candidate.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS &&
+                runCatching { context.assets.open(candidate).close() }.isSuccess
+        }
+    }
 
     private companion object {
         const val FEATURED_AUDIO_ROOT = "featured_audio"
@@ -283,5 +312,6 @@ class FeaturedAudioRepository(private val context: Context) {
         const val DEFAULT_ALBUM = "专题音频包"
         const val DEFAULT_PLAY_LABEL = "从头播放"
         val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "ogg", "wav", "flac")
+        val IMAGE_EXTENSIONS = setOf("png", "webp", "jpg", "jpeg")
     }
 }

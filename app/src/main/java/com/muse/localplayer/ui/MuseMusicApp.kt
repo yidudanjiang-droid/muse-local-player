@@ -652,6 +652,7 @@ internal fun HomeScreen(
         item {
             FeaturedPackageHero(
                 metadata = featuredMetadata,
+                artworkUri = featuredTracks.firstOrNull()?.artworkUri,
                 trackCount = featuredTracks.size,
                 totalDurationMs = featuredDuration,
                 onPlay = if (featuredTracks.isEmpty()) null else onPlayFeaturedTracks
@@ -698,7 +699,13 @@ internal fun HomeScreen(
 }
 
 @Composable
-private fun FeaturedPackageHero(metadata: FeaturedPackMetadata, trackCount: Int, totalDurationMs: Long, onPlay: (() -> Unit)?) {
+private fun FeaturedPackageHero(
+    metadata: FeaturedPackMetadata,
+    artworkUri: android.net.Uri?,
+    trackCount: Int,
+    totalDurationMs: Long,
+    onPlay: (() -> Unit)?
+) {
     Card(
         onClick = { onPlay?.invoke() },
         enabled = onPlay != null,
@@ -707,8 +714,14 @@ private fun FeaturedPackageHero(metadata: FeaturedPackMetadata, trackCount: Int,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            Image(
-                painter = painterResource(R.drawable.featured_audio_cover),
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(artworkUri ?: R.drawable.featured_audio_cover)
+                    .size(640)
+                    .memoryCacheKey("featured_hero_${artworkUri ?: "default"}")
+                    .diskCacheKey("featured_hero_${artworkUri ?: "default"}")
+                    .crossfade(false)
+                    .build(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop

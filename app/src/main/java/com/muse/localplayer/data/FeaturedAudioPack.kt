@@ -11,5 +11,7 @@ data class FeaturedPackMetadata(
     val description: String = "内置于 APK 的专题声音内容。",
     val defaultArtist: String = "精选内容",
     val defaultAlbum: String = "专题音频包",
-    val playLabel: String = "从头播放"
+    val playLabel: String = "从头播放",
+    /** Optional image asset path configured by pack.json, for example featured_audio/cover.webp. */
+    val coverAssetPath: String? = null
 )

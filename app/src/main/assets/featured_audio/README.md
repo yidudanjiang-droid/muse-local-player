@@ -14,6 +14,14 @@ app/src/main/assets/featured_audio/
 
 标题、艺人、专辑、时长和封面会优先读取音频自身的标签；没有标签时，应用会用文件名生成标题，并把艺人和专辑显示为“专题音频包”。文件名前加 `01-`、`02-` 等序号即可控制默认展示顺序。同曲序、同标题的文件会进一步按 assets 路径排序，确保二次打包后的顺序稳定。
 
+如需为当前专题替换默认首页与曲目封面，可先将 `.png`、`.webp`、`.jpg` 或 `.jpeg` 放入 assets（通常置于本目录），再在 `pack.json` 顶层声明 `coverAsset`。路径支持 `featured_audio/cover.webp`、`cover.webp` 或反斜杠写法；无效路径会安全回退默认封面：
+
+```json
+{
+  "coverAsset": "cover.webp"
+}
+```
+
 如需精确控制某些文件，可在同一目录的 `pack.json` 中加入可选 `tracks` 对象。键名可用 `featured_audio/` 完整路径或省略此前缀：
 
 ```json

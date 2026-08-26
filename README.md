@@ -66,6 +66,7 @@ app/src/main/assets/
 | `defaultArtist` | 音频标签缺失时的艺人名称 |
 | `defaultAlbum` | 音频标签缺失时的专辑名称 |
 | `playLabel` | 首页播放按钮文字 |
+| `coverAsset` | 可选的专题封面 assets 路径；支持 `.png`、`.webp`、`.jpg`、`.jpeg`，例如 `featured_audio/cover.webp` 或 `cover.webp`。 |
 
 支持的格式为 `.mp3`、`.m4a`、`.aac`、`.ogg`、`.wav`、`.flac`。文件名可使用 `01-`、`02-` 等前缀控制无标签文件的默认排序。若希望不依赖文件标签或文件名前缀，可在 `pack.json` 中使用可选的 `tracks` 对象精确覆盖曲目元数据：
 
@@ -83,7 +84,7 @@ app/src/main/assets/
 }
 ```
 
-路径可写完整 assets 相对路径（如 `featured_audio/01-opening.mp3`），也可省略 `featured_audio/` 前缀。覆盖项优先于音频标签和文件名；同排序与同标题的文件会进一步按资产路径排序，保证二次打包后顺序稳定。单个音频损坏、标签异常或缓存准备失败会被跳过，不会让剩余专题内容消失。更多约定见 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md)。
+路径可写完整 assets 相对路径（如 `featured_audio/01-opening.mp3`），也可省略 `featured_audio/` 前缀。覆盖项优先于音频标签和文件名；同排序与同标题的文件会进一步按资产路径排序，保证二次打包后顺序稳定。`coverAsset` 也支持同样的路径规则与反斜杠标准化；无效路径、缺失文件或不支持格式会自动回退为内置默认封面。单个音频损坏、标签异常或缓存准备失败会被跳过，不会让剩余专题内容消失。更多约定见 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md)。
 
 ### 已构建 APK 的二次打包
 
