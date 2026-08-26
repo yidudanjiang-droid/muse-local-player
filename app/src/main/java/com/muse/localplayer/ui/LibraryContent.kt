@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import com.muse.localplayer.data.Album
+import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedPackMetadata
 import com.muse.localplayer.data.LibraryTab
 import com.muse.localplayer.data.Track
@@ -17,6 +18,7 @@ internal fun LibraryContent(
     featuredTracks: List<Track>,
     featuredMetadata: FeaturedPackMetadata,
     visibleTracks: List<Track>,
+    contentSearchResults: List<ContentSearchResult>,
     isSearching: Boolean,
     favoriteIds: Set<Long>,
     libraryUiState: LibraryUiState,
@@ -36,6 +38,7 @@ internal fun LibraryContent(
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
+    onPlayContentSearchResult: (ContentSearchResult) -> Unit,
     onPlayFeaturedTracks: () -> Unit,
     onAddTracksToQueue: (List<Track>) -> Unit,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
@@ -84,11 +87,13 @@ internal fun LibraryContent(
         LibraryTab.SONGS -> SongsScreen(
             tracks = songsForScreen,
             isSearching = isSearching,
+            contentSearchResults = contentSearchResults,
             libraryUiState = libraryUiState,
             contentPadding = contentPadding,
             onRequestPermission = onRequestPermission,
             onRescan = onRescan,
             onPlay = onPlay,
+            onPlayContentSearchResult = onPlayContentSearchResult,
             onMore = onMore
         )
         LibraryTab.ALBUMS -> AlbumsScreen(

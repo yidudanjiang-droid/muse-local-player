@@ -15,6 +15,8 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.muse.localplayer.data.ContentSearchKind
+import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedAudioPack
 import com.muse.localplayer.data.FeaturedAudioRepository
 import com.muse.localplayer.data.FeaturedPackMetadata
@@ -787,23 +789,47 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playBookmark(item: BookmarkItem) {
-        failedTrackIds.remove(item.track.id)
-        val activeController = controller ?: run {
-            pendingBookmark = item
+        playTrackAtPosition(
+            track = item.track,
+            positionMs = item.bookmark.positionMs,
+            feedback = "已从 ${formatTimestamp(item.bookmark.positionMs)} 继续《${item.track.title}》。"
+        )
+    }
+
+    fun playSearchResult(result: ContentSearchResult) {
+        result.bookmark?.let { bookmark ->
+            playBookmark(BookmarkItem(bookmark, result.track))
             return
         }
-        val queueToPlay = _queue.value.ifEmpty { tracksBySource[item.track.source].orEmpty() }
-        val targetQueue = if (queueToPlay.any { it.id == item.track.id }) queueToPlay else queueToPlay + item.track
-        val targetIndex = targetQueue.indexOfFirst { it.id == item.track.id }.coerceAtLeast(0)
-        if (activeController.currentMediaItem?.mediaId == item.track.id.toString()) {
-            activeController.seekTo(item.bookmark.positionMs)
+        val feedback = if (result.kind == ContentSearchKind.TRACK) {
+            "正在播放《${result.track.title}》。"
+        } else {
+            "已定位到《${result.track.title}》的 ${formatTimestamp(result.positionMs)}。"
+        }
+        playTrackAtPosition(result.track, result.positionMs, feedback)
+    }
+
+    private fun playTrackAtPosition(track: Track, positionMs: Long, feedback: String) {
+        failedTrackIds.remove(track.id)
+        val activeController = controller ?: run {
+            pendingBookmark = BookmarkItem(
+                bookmark = PlaybackBookmark(track.id, positionMs.coerceAtLeast(0L), System.currentTimeMillis()),
+                track = track
+            )
+            return
+        }
+        val queueToPlay = _queue.value.ifEmpty { tracksBySource[track.source].orEmpty() }
+        val targetQueue = if (queueToPlay.any { it.id == track.id }) queueToPlay else queueToPlay + track
+        val targetIndex = targetQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+        if (activeController.currentMediaItem?.mediaId == track.id.toString()) {
+            activeController.seekTo(positionMs.coerceAtLeast(0L))
             startOrResume(activeController, forceFadeIn = true)
         } else {
-            transitionToQueue(activeController, targetQueue, targetIndex, item.bookmark.positionMs)
+            transitionToQueue(activeController, targetQueue, targetIndex, positionMs)
         }
-        _currentTrack.value = item.track
+        _currentTrack.value = track
         _isPlaying.value = true
-        _playerMessage.value = PlayerFeedback("已从 ${formatTimestamp(item.bookmark.positionMs)} 继续《${item.track.title}》。")
+        _playerMessage.value = PlayerFeedback(feedback)
     }
 
     fun setMixingPlaybackEnabled(enabled: Boolean) {
@@ -846,6 +872,76 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 .forEach { stale -> viewModelScope.launch { preferencesRepository.removePlaybackBookmark(stale) } }
         }
     }
+
+    suspend fun searchContent(rawQuery: String): List<ContentSearchResult> {
+        val query = rawQuery.trim()
+        if (query.isBlank()) return emptyList()
+        val results = mutableListOf<ContentSearchResult>()
+        _tracks.value.forEach { track ->
+            if (matchesQuery(query, track.title, track.artist, track.album)) {
+                results += ContentSearchResult(
+                    kind = ContentSearchKind.TRACK,
+                    track = track,
+                    title = track.title,
+                    supportingText = "${track.artist} · ${track.album}"
+                )
+            }
+        }
+        featuredProgramsByTrackId.forEach { (trackId, program) ->
+            val track = trackIndex[trackId] ?: return@forEach
+            program.chapters.filter { chapter -> matchesQuery(query, chapter.title, track.title) }
+                .forEach { chapter ->
+                    results += ContentSearchResult(
+                        kind = ContentSearchKind.CHAPTER,
+                        track = track,
+                        title = chapter.title,
+                        supportingText = "章节 · ${track.title} · ${formatTimestamp(chapter.timestampMs)}",
+                        positionMs = chapter.timestampMs
+                    )
+                }
+            program.notes.filter { note -> matchesQuery(query, note, track.title) }
+                .forEach { note ->
+                    results += ContentSearchResult(
+                        kind = ContentSearchKind.NOTE,
+                        track = track,
+                        title = note,
+                        supportingText = "节目笔记 · ${track.title}"
+                    )
+                }
+        }
+        _featuredTracks.value.forEach { track ->
+            lyricsRepository.loadFeaturedLyrics(track)
+                .filter { line -> matchesQuery(query, line.text, track.title) }
+                .forEach { line ->
+                    results += ContentSearchResult(
+                        kind = ContentSearchKind.LYRIC,
+                        track = track,
+                        title = line.text,
+                        supportingText = "歌词 · ${track.title} · ${formatTimestamp(line.timestampMs)}",
+                        positionMs = line.timestampMs
+                    )
+                }
+        }
+        _bookmarkItems.value.filter { item ->
+            matchesQuery(query, "书签", item.track.title, item.track.artist, formatTimestamp(item.bookmark.positionMs))
+        }.forEach { item ->
+            results += ContentSearchResult(
+                kind = ContentSearchKind.BOOKMARK,
+                track = item.track,
+                title = item.track.title,
+                supportingText = "书签 · ${formatTimestamp(item.bookmark.positionMs)} · ${item.track.artist}",
+                positionMs = item.bookmark.positionMs,
+                bookmark = item.bookmark
+            )
+        }
+        return results
+            .distinctBy { "${it.kind}:${it.track.id}:${it.positionMs}:${it.title}" }
+            .sortedWith(compareBy<ContentSearchResult> { it.kind.ordinal }.thenBy { it.title.lowercase() })
+            .take(80)
+    }
+
+    private fun matchesQuery(query: String, vararg candidates: String): Boolean =
+        candidates.any { it.contains(query, ignoreCase = true) }
 
     private fun scheduleSleepTimer(endEpochMs: Long) {
         sleepTimerJob?.cancel()

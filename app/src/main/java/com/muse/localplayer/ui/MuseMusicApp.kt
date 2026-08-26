@@ -126,6 +126,7 @@ import androidx.media3.common.Player
 import com.muse.localplayer.BuildConfig
 import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
+import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedPackMetadata
 import com.muse.localplayer.data.FeaturedTrackProgram
 import com.muse.localplayer.data.LibraryTab
@@ -172,6 +173,7 @@ fun MuseMusicApp(
     var searchMode by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
     var appliedSearchText by remember { mutableStateOf("") }
+    var contentSearchResults by remember { mutableStateOf<List<ContentSearchResult>>(emptyList()) }
     var playerOpen by remember { mutableStateOf(false) }
     var queueOpen by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
@@ -191,6 +193,9 @@ fun MuseMusicApp(
                 it.artist.contains(query, ignoreCase = true) ||
                 it.album.contains(query, ignoreCase = true)
         }
+    }
+    LaunchedEffect(appliedSearchText, tracks, featuredTracks, bookmarks) {
+        contentSearchResults = if (appliedSearchText.isBlank()) emptyList() else viewModel.searchContent(appliedSearchText)
     }
     val compactLayout = LocalConfiguration.current.screenWidthDp < 600
     LaunchedEffect(playerMessage) {
@@ -359,6 +364,7 @@ fun MuseMusicApp(
                     featuredTracks = featuredTracks,
                     featuredMetadata = featuredPackMetadata,
                     visibleTracks = filteredTracks,
+                    contentSearchResults = contentSearchResults,
                     isSearching = searchMode && appliedSearchText.isNotBlank(),
                     favoriteIds = favoriteIds,
                     libraryUiState = libraryUiState,
@@ -378,6 +384,7 @@ fun MuseMusicApp(
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRescan = viewModel::reloadLibrary,
                     onPlay = viewModel::play,
+                    onPlayContentSearchResult = viewModel::playSearchResult,
                     onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                     onAddTracksToQueue = { tracksToAdd ->
                         val addedCount = viewModel.addTracksToQueue(tracksToAdd)
@@ -410,6 +417,7 @@ fun MuseMusicApp(
                             featuredTracks = featuredTracks,
                             featuredMetadata = featuredPackMetadata,
                             visibleTracks = filteredTracks,
+                            contentSearchResults = contentSearchResults,
                             isSearching = searchMode && appliedSearchText.isNotBlank(),
                             favoriteIds = favoriteIds,
                             libraryUiState = libraryUiState,
@@ -429,6 +437,7 @@ fun MuseMusicApp(
                             onRequestNotificationPermission = onRequestNotificationPermission,
                             onRescan = viewModel::reloadLibrary,
                             onPlay = viewModel::play,
+                            onPlayContentSearchResult = viewModel::playSearchResult,
                             onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                             onAddTracksToQueue = { tracksToAdd ->
                                 val addedCount = viewModel.addTracksToQueue(tracksToAdd)
@@ -1032,11 +1041,13 @@ private fun FeaturedTrackCard(track: Track, onPlay: (Track) -> Unit) {
 internal fun SongsScreen(
     tracks: List<Track>,
     isSearching: Boolean,
+    contentSearchResults: List<ContentSearchResult>,
     libraryUiState: LibraryUiState,
     contentPadding: PaddingValues,
     onRequestPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
+    onPlayContentSearchResult: (ContentSearchResult) -> Unit,
     onMore: (Track) -> Unit
 ) {
     var sortAscending by remember { mutableStateOf(true) }
@@ -1059,12 +1070,18 @@ internal fun SongsScreen(
             Text(if (isSearching) "搜索结果" else "设备音乐", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                if (isSearching) "${tracks.size} 首匹配的专题音频或设备音乐" else "${tracks.size} 首设备本地音乐",
+                if (isSearching) "${contentSearchResults.size} 项本地内容命中" else "${tracks.size} 首设备本地音乐",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (isSearching) {
+                Text(
+                    "可搜索曲目、章节、逐行歌词、节目笔记和书签；点按即可播放或定位。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box {
                     AssistChip(
                         onClick = { sortMenuExpanded = true },
@@ -1093,9 +1110,64 @@ internal fun SongsScreen(
             }
             Spacer(Modifier.height(12.dp))
         }
-        if (tracks.isEmpty()) item { EmptyLibraryCard(libraryUiState, onRequestPermission, onRescan) }
-        else items(sortedTracks, key = { it.id }) { track ->
+        if (isSearching) {
+            if (contentSearchResults.isEmpty()) item {
+                EmptySearchContentCard()
+            } else items(
+                contentSearchResults,
+                key = { "${it.kind}_${it.track.id}_${it.positionMs}_${it.title}" }
+            ) { result ->
+                ContentSearchResultItem(result = result, onClick = { onPlayContentSearchResult(result) })
+            }
+        } else if (tracks.isEmpty()) item {
+            EmptyLibraryCard(libraryUiState, onRequestPermission, onRescan)
+        } else items(sortedTracks, key = { it.id }) { track ->
             TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
+        }
+    }
+}
+
+@Composable
+private fun ContentSearchResultItem(result: ContentSearchResult, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AlbumArt(Modifier.size(46.dp), result.track.artworkUri, result.track.title, ArtEmphasis.Secondary)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(result.kind.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(result.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    result.supportingText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(Icons.Default.PlayArrow, contentDescription = "播放或定位", tint = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+private fun EmptySearchContentCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text("没有匹配的本地内容", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text("可尝试曲名、艺人、章节标题、歌词文字、节目笔记或书签时间。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
