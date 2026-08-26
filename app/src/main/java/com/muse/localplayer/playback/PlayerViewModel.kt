@@ -125,6 +125,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastClearedQueue: List<Track> = emptyList()
     private var lastClearedCurrentTrack: Track? = null
     private var lastRemovedQueueItem: RemovedQueueItem? = null
+    private var lastTrimmedQueueItems: List<Track> = emptyList()
     private val failedTrackIds = mutableSetOf<Long>()
     private val sessionToken = SessionToken(application, ComponentName(application, MusicPlaybackService::class.java))
     private val controllerFuture = MediaController.Builder(application, sessionToken).buildAsync()
@@ -469,6 +470,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         controller?.removeMediaItem(index)
         updateQueueState(currentQueue.toMutableList().also { it.removeAt(index) })
         lastRemovedQueueItem = RemovedQueueItem(removedTrack, index)
+        lastTrimmedQueueItems = emptyList()
         return removedTrack
     }
 
@@ -496,12 +498,42 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         updatedQueue.add(toIndex, item)
         updateQueueState(updatedQueue)
         lastRemovedQueueItem = null
+        lastTrimmedQueueItems = emptyList()
+    }
+
+    /** Removes only entries before the active item, keeping the current song and all upcoming songs intact. */
+    fun removePlayedQueueItems(): Int {
+        val currentQueue = _queue.value
+        val controllerIndex = controller?.currentMediaItemIndex ?: C.INDEX_UNSET
+        val currentIndex = controllerIndex.takeIf { it in currentQueue.indices }
+            ?: currentQueue.indexOfFirst { it.id == _currentTrack.value?.id }
+        if (currentIndex <= 0) return 0
+        lastTrimmedQueueItems = currentQueue.take(currentIndex)
+        controller?.removeMediaItems(0, currentIndex)
+        updateQueueState(currentQueue.drop(currentIndex))
+        lastRemovedQueueItem = null
+        return lastTrimmedQueueItems.size
+    }
+
+    /** Restores entries removed by [removePlayedQueueItems] during the short UI undo window. */
+    fun restoreLastTrimmedQueueItems(): Boolean {
+        val trimmedItems = lastTrimmedQueueItems
+        if (trimmedItems.isEmpty()) return false
+        val currentQueue = _queue.value
+        val activeController = controller
+        if (activeController != null && activeController.mediaItemCount > 0) {
+            activeController.addMediaItems(0, trimmedItems.map { it.toMediaItem() })
+        }
+        updateQueueState(trimmedItems + currentQueue)
+        lastTrimmedQueueItems = emptyList()
+        return true
     }
 
     fun clearQueue() {
         lastClearedQueue = _queue.value
         lastClearedCurrentTrack = _currentTrack.value
         lastRemovedQueueItem = null
+        lastTrimmedQueueItems = emptyList()
         controller?.clearMediaItems()
         _currentTrack.value = null
         _isPlaying.value = false

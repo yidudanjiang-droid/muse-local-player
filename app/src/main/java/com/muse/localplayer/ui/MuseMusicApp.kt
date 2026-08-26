@@ -509,6 +509,23 @@ fun MuseMusicApp(
                 }
             },
             onMove = viewModel::moveQueueItem,
+            onRemovePlayed = {
+                val removedCount = viewModel.removePlayedQueueItems()
+                if (removedCount > 0) {
+                    scope.launch {
+                        val result = snackbarHostState.showSnackbar(
+                            message = "已移除 ${removedCount} 首已播歌曲",
+                            actionLabel = "撤销",
+                            withDismissAction = true
+                        )
+                        if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                            if (viewModel.restoreLastTrimmedQueueItems()) {
+                                snackbarHostState.showSnackbar("已恢复已播歌曲")
+                            }
+                        }
+                    }
+                }
+            },
             onClear = {
                 viewModel.clearQueue()
                 scope.launch {
@@ -1696,6 +1713,7 @@ private fun QueueSheet(
     onPlay: (Int) -> Unit,
     onRemove: (Int) -> Unit,
     onMove: (Int, Int) -> Unit,
+    onRemovePlayed: () -> Unit,
     onClear: () -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -1719,6 +1737,7 @@ private fun QueueSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (currentIndex > 0) TextButton(onClick = onRemovePlayed) { Text("移除已播") }
                 if (queue.isNotEmpty()) TextButton(onClick = onClear) { Text("清空队列") }
             }
             Spacer(Modifier.height(8.dp))
