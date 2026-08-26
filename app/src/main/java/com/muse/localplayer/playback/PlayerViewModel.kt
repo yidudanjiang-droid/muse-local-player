@@ -170,9 +170,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_READY) {
-                failedTrackIds.clear()
-            }
+            // 成功播放下一首不应遗忘本轮已失败文件；否则随机/循环可能再次跳回坏文件。
             refreshPlaybackState()
         }
 
@@ -399,6 +397,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun play(track: Track) {
+        // 用户主动点按可重试此前失败的文件；若仍失败则继续沿用自动跳过保护。
+        failedTrackIds.remove(track.id)
         val activeController = controller ?: run {
             pendingTrack = track
             return
@@ -431,6 +431,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val activeController = controller ?: return
         val currentQueue = _queue.value
         if (index !in currentQueue.indices) return
+        failedTrackIds.remove(currentQueue[index].id)
         if (activeController.mediaItemCount == 0) {
             transitionToQueue(activeController, currentQueue, index)
             return
@@ -768,13 +769,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun skipFailedTrack(activeController: MediaController): Boolean {
         val failedTrackId = activeController.currentMediaItem?.mediaId?.toLongOrNull() ?: return false
         failedTrackIds += failedTrackId
-        if (failedTrackIds.size >= activeController.mediaItemCount || !activeController.hasNextMediaItem()) {
-            return false
+        if (failedTrackIds.size >= activeController.mediaItemCount) return false
+
+        // 使用 Media3 当前的顺序、随机和循环导航规则逐个前进，跳过已失败项目。
+        repeat(activeController.mediaItemCount - 1) {
+            if (!activeController.hasNextMediaItem()) return false
+            activeController.seekToNextMediaItem()
+            val candidateId = activeController.currentMediaItem?.mediaId?.toLongOrNull() ?: return@repeat
+            if (candidateId !in failedTrackIds) {
+                activeController.prepare()
+                startOrResume(activeController, forceFadeIn = true)
+                return true
+            }
         }
-        activeController.seekToNextMediaItem()
-        activeController.prepare()
-        startOrResume(activeController, forceFadeIn = true)
-        return true
+        return false
     }
 
     private fun transitionToQueue(
@@ -782,6 +790,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         queue: List<Track>,
         startIndex: Int
     ) {
+        // 新的显式播放上下文应重新允许各文件被尝试一次。
+        failedTrackIds.clear()
         val replaceAndPlay = {
             resetTimelineForTrackId(queue[startIndex].id.toString())
             activeController.setMediaItems(queue.map { it.toMediaItem() }, startIndex, 0L)
