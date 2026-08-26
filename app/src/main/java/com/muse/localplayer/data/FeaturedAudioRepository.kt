@@ -8,6 +8,7 @@ import com.muse.localplayer.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 import org.json.JSONObject
 import kotlin.math.abs
 
@@ -74,7 +75,7 @@ class FeaturedAudioRepository(private val context: Context) {
         val metadata = readMetadata(this)
         val albumTitle = metadata.album ?: pack.defaultAlbum
         return Track(
-            id = -abs(hashCode().toLong()) - 1L,
+            id = stableAssetId(this),
             title = metadata.title ?: fallbackTitle,
             artist = metadata.artist ?: pack.defaultArtist,
             album = albumTitle,
@@ -99,7 +100,7 @@ class FeaturedAudioRepository(private val context: Context) {
         val cacheDirectory = materializedAssetCacheDirectory()
         if (!cacheDirectory.exists()) cacheDirectory.mkdirs()
         val fileName = assetPath.substringAfterLast('/').ifBlank { "audio" }
-        val safeName = "${assetPath.hashCode().toUInt().toString(16)}_$fileName"
+        val safeName = "${assetCacheKey(assetPath)}_$fileName"
         val outputFile = File(cacheDirectory, safeName)
         if (outputFile.exists() && outputFile.length() > 0L) return Uri.fromFile(outputFile)
 
@@ -125,12 +126,24 @@ class FeaturedAudioRepository(private val context: Context) {
     }
 
     private fun clearStaleMaterializedAssets() {
-        val activeDirectory = materializedAssetCacheDirectory().name
+        val activeDirectory = materializedAssetCacheDirectory()
         context.cacheDir.listFiles()
             .orEmpty()
-            .filter { it.isDirectory && it.name.startsWith(MATERIALIZED_ASSET_DIRECTORY) && it.name != activeDirectory }
+            .filter { it.isDirectory && it.name.startsWith(MATERIALIZED_ASSET_DIRECTORY) && it.name != activeDirectory.name }
             .forEach { staleDirectory -> runCatching { staleDirectory.deleteRecursively() } }
+        activeDirectory.listFiles()
+            .orEmpty()
+            .filter { it.isFile && it.name.endsWith(".part") }
+            .forEach { partialFile -> runCatching { partialFile.delete() } }
     }
+
+    private fun stableAssetId(assetPath: String): Long {
+        val bits = UUID.nameUUIDFromBytes(assetPath.toByteArray(Charsets.UTF_8)).leastSignificantBits and Long.MAX_VALUE
+        return -bits - 1L
+    }
+
+    private fun assetCacheKey(assetPath: String): String =
+        UUID.nameUUIDFromBytes(assetPath.toByteArray(Charsets.UTF_8)).toString()
 
     private fun readMetadata(assetPath: String): AssetMetadata {
         readMetadataFromDescriptor(assetPath).getOrNull()?.let { return it }

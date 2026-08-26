@@ -320,15 +320,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (activeController.currentMediaItem?.mediaId != track.id.toString()) {
             val startIndex = queueToPlay.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-            resetTimelineForTrackId(track.id.toString())
-            activeController.setMediaItems(queueToPlay.map { it.toMediaItem() }, startIndex, 0L)
-            activeController.prepare()
-            updateQueueState(queueToPlay)
+            transitionToQueue(activeController, queueToPlay, startIndex)
+        } else {
+            startOrResume(activeController)
         }
-        val shouldFadeIn = !activeController.isPlaying && _fadeTransitionsEnabled.value
-        if (shouldFadeIn) activeController.volume = 0f
-        activeController.play()
-        if (shouldFadeIn) fadeIn(activeController)
         _currentTrack.value = track
         _isPlaying.value = true
     }
@@ -336,11 +331,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun playQueueItem(index: Int) {
         val activeController = controller ?: return
         if (index !in _queue.value.indices) return
-        activeController.seekToDefaultPosition(index)
-        val shouldFadeIn = !activeController.isPlaying && _fadeTransitionsEnabled.value
-        if (shouldFadeIn) activeController.volume = 0f
-        activeController.play()
-        if (shouldFadeIn) fadeIn(activeController)
+        val switchItem = {
+            activeController.seekToDefaultPosition(index)
+            startOrResume(activeController, forceFadeIn = true)
+        }
+        if (activeController.isPlaying && _fadeTransitionsEnabled.value) {
+            fadeOutThen(activeController, switchItem)
+        } else {
+            switchItem()
+        }
     }
 
     fun playAlbum(albumTracks: List<Track>, startTrack: Track? = albumTracks.firstOrNull()) {
@@ -369,14 +368,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         val startIndex = cleanedQueue.indexOfFirst { it.id == startTrack?.id }.coerceAtLeast(0)
-        resetTimelineForTrackId(cleanedQueue[startIndex].id.toString())
-        activeController.setMediaItems(cleanedQueue.map { it.toMediaItem() }, startIndex, 0L)
-        activeController.prepare()
-        updateQueueState(cleanedQueue)
         if (shouldPlay) {
-            activeController.volume = if (_fadeTransitionsEnabled.value) 0f else DEFAULT_PLAYER_VOLUME
-            activeController.play()
-            fadeIn(activeController)
+            transitionToQueue(activeController, cleanedQueue, startIndex)
+        } else {
+            resetTimelineForTrackId(cleanedQueue[startIndex].id.toString())
+            activeController.setMediaItems(cleanedQueue.map { it.toMediaItem() }, startIndex, 0L)
+            activeController.prepare()
+            updateQueueState(cleanedQueue)
         }
     }
 
@@ -527,6 +525,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun isFavorite(track: Track): Boolean = track.id in _favoriteIds.value
+
+    private fun transitionToQueue(
+        activeController: MediaController,
+        queue: List<Track>,
+        startIndex: Int
+    ) {
+        val replaceAndPlay = {
+            resetTimelineForTrackId(queue[startIndex].id.toString())
+            activeController.setMediaItems(queue.map { it.toMediaItem() }, startIndex, 0L)
+            activeController.prepare()
+            updateQueueState(queue)
+            startOrResume(activeController, forceFadeIn = true)
+        }
+        if (activeController.isPlaying && _fadeTransitionsEnabled.value) {
+            fadeOutThen(activeController, replaceAndPlay)
+        } else {
+            replaceAndPlay()
+        }
+    }
+
+    private fun startOrResume(activeController: MediaController, forceFadeIn: Boolean = false) {
+        val shouldFadeIn = _fadeTransitionsEnabled.value && (forceFadeIn || !activeController.isPlaying)
+        if (shouldFadeIn) activeController.volume = 0f
+        activeController.play()
+        if (shouldFadeIn) fadeIn(activeController)
+    }
 
     private fun applyAudioFocusPolicy(activeController: MediaController) {
         activeController.setAudioAttributes(MUSIC_AUDIO_ATTRIBUTES, !_mixingPlaybackEnabled.value)
@@ -694,6 +718,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         progressJob = null
         fadeJob?.cancel()
         fadeJob = null
+        controller?.volume = DEFAULT_PLAYER_VOLUME
         libraryScanJob?.cancel()
         stopMediaStoreObservation()
         controller?.removeListener(playerListener)

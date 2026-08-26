@@ -102,11 +102,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import com.muse.localplayer.BuildConfig
@@ -1165,6 +1167,18 @@ private fun AlbumArt(modifier: Modifier, seed: String, emphasis: ArtEmphasis) {
 
 @Composable
 private fun AlbumArt(modifier: Modifier, artworkUri: android.net.Uri?, seed: String, emphasis: ArtEmphasis) {
+    val context = LocalContext.current
+    val artworkRequest = remember(artworkUri) {
+        artworkUri?.let { uri ->
+            ImageRequest.Builder(context)
+                .data(uri)
+                .size(384)
+                .memoryCacheKey("muse-artwork:${uri}")
+                .diskCacheKey("muse-artwork:${uri}")
+                .crossfade(false)
+                .build()
+        }
+    }
     val palette = when (emphasis) {
         ArtEmphasis.Primary -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
         ArtEmphasis.Secondary -> when (seed.hashCode().absoluteValue % 3) {
@@ -1179,7 +1193,7 @@ private fun AlbumArt(modifier: Modifier, artworkUri: android.net.Uri?, seed: Str
             Icon(Icons.Default.MusicNote, contentDescription = null, tint = palette.second, modifier = Modifier.size(26.dp))
             if (artworkUri != null) {
                 AsyncImage(
-                    model = artworkUri,
+                    model = artworkRequest,
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop

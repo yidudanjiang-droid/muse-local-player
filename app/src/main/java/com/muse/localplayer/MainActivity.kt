@@ -76,7 +76,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        if (hasAudioPermission()) playerViewModel.reloadLibrary()
     }
 
     /** Requests both optional system surfaces on first entry, then keeps each action available separately. */
@@ -87,9 +86,7 @@ class MainActivity : ComponentActivity() {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-        if (permissions.isEmpty()) {
-            playerViewModel.reloadLibrary()
-        } else {
+        if (permissions.isNotEmpty()) {
             markPrompted(permissions)
             permissionLauncher.launch(permissions.toTypedArray())
         }
