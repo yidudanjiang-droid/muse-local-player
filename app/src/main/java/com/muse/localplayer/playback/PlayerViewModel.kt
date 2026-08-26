@@ -316,6 +316,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun updateTracks(featured: List<Track>, deviceTracks: List<Track>) {
+        val previousQueue = _queue.value
         val allTracks = featured + deviceTracks
         trackIndex = allTracks.associateBy(Track::id)
         tracksBySource = allTracks.groupBy(Track::source)
@@ -323,7 +324,55 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _recentlyAdded.value = deviceTracks
             .sortedByDescending(Track::dateAddedSeconds)
             .take(8)
+        reconcileQueueAfterLibraryUpdate(previousQueue)
         refreshPlaybackHistory()
+    }
+
+    /**
+     * A MediaStore refresh can invalidate device URIs while the app is alive. Remove only tracks
+     * that no longer resolve in the refreshed index, and rebuild Media3's queue only when needed.
+     */
+    private fun reconcileQueueAfterLibraryUpdate(previousQueue: List<Track>) {
+        if (previousQueue.isEmpty()) return
+        val reconciledQueue = previousQueue.mapNotNull { trackIndex[it.id] }
+        val removedCount = previousQueue.size - reconciledQueue.size
+        if (removedCount == 0) {
+            _currentTrack.value?.id?.let(trackIndex::get)?.let { _currentTrack.value = it }
+            return
+        }
+
+        val activeController = controller
+        val wasPlaying = activeController?.isPlaying == true
+        val previousCurrentId = activeController?.currentMediaItem?.mediaId?.toLongOrNull()
+            ?: _currentTrack.value?.id
+        if (activeController != null && activeController.mediaItemCount > 0) {
+            if (reconciledQueue.isEmpty()) {
+                activeController.clearMediaItems()
+                resetTimelineForTrackId(null)
+                _currentTrack.value = null
+                _isPlaying.value = false
+            } else {
+                val resumeIndex = reconciledQueue.indexOfFirst { it.id == previousCurrentId }
+                    .takeIf { it >= 0 }
+                    ?: activeController.currentMediaItemIndex.coerceIn(0, reconciledQueue.lastIndex)
+                val resumePosition = activeController.currentPosition.coerceAtLeast(0L)
+                resetTimelineForTrackId(reconciledQueue[resumeIndex].id.toString())
+                activeController.setMediaItems(
+                    reconciledQueue.map { it.toMediaItem() },
+                    resumeIndex,
+                    resumePosition
+                )
+                activeController.prepare()
+                if (wasPlaying) activeController.play()
+                _currentTrack.value = reconciledQueue[resumeIndex]
+            }
+        }
+        updateQueueState(reconciledQueue)
+        _playerMessage.value = if (reconciledQueue.isEmpty()) {
+            "媒体库更新后，播放队列中的文件已不可用。"
+        } else {
+            "媒体库更新后，已从播放队列移除 ${removedCount} 首不可用音频。"
+        }
     }
 
     private fun startMediaStoreObservation() {
