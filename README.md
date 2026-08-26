@@ -67,7 +67,23 @@ app/src/main/assets/
 | `defaultAlbum` | 音频标签缺失时的专辑名称 |
 | `playLabel` | 首页播放按钮文字 |
 
-支持的格式为 `.mp3`、`.m4a`、`.aac`、`.ogg`、`.wav`、`.flac`。文件名可使用 `01-`、`02-` 等前缀控制无标签文件的默认排序。更多约定见 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md)。
+支持的格式为 `.mp3`、`.m4a`、`.aac`、`.ogg`、`.wav`、`.flac`。文件名可使用 `01-`、`02-` 等前缀控制无标签文件的默认排序。若希望不依赖文件标签或文件名前缀，可在 `pack.json` 中使用可选的 `tracks` 对象精确覆盖曲目元数据：
+
+```json
+{
+  "tracks": {
+    "featured_audio/01-opening.mp3": {
+      "title": "开场",
+      "artist": "专题艺人",
+      "album": "2026 精选",
+      "trackNumber": 1,
+      "year": 2026
+    }
+  }
+}
+```
+
+路径可写完整 assets 相对路径（如 `featured_audio/01-opening.mp3`），也可省略 `featured_audio/` 前缀。覆盖项优先于音频标签和文件名；同排序与同标题的文件会进一步按资产路径排序，保证二次打包后顺序稳定。单个音频损坏、标签异常或缓存准备失败会被跳过，不会让剩余专题内容消失。更多约定见 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md)。
 
 ### 已构建 APK 的二次打包
 
@@ -78,6 +94,8 @@ Muse 不会把专题音频发现逻辑固定在构建时。重新签名并安装
 | 新增音频保持未压缩 | Media3 直接从 APK assets 播放。 |
 | 新增音频被工具压缩 | 应用仅在需要时复制到私有缓存，并以本地 URI 播放；缓存随 APK 更新时间隔离，旧版本缓存会被清理。 |
 | 没有 `featured_audio/pack.json` | 使用稳定的默认专题标题和默认元数据。 |
+| `pack.json` 包含 `tracks` 覆盖项 | 按资产路径应用自定义标题、艺人、专辑、曲序和年份，优先于文件标签。 |
+| 单个新增音频损坏或无法解析 | 跳过异常文件，继续显示和播放其余专题曲目。 |
 | 正在运行旧 APK | 不会动态读取电脑端后来添加的文件；必须重新签名并安装/更新 APK。 |
 
 > 仅应内置你拥有使用、修改、发行或分发权利的音频、封面与文案。Muse 本身不提供音乐下载、在线流媒体或版权授权服务。

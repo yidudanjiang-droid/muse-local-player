@@ -19,32 +19,72 @@ import kotlin.math.abs
 class FeaturedAudioRepository(private val context: Context) {
     suspend fun loadPack(): FeaturedAudioPack = withContext(Dispatchers.IO) {
         clearStaleMaterializedAssets()
-        val metadata = readPackMetadata()
+        val configuration = readPackConfiguration()
         val tracks = listAudioAssetPaths()
-            .map { assetPath -> assetPath.toFeaturedTrack(metadata) }
-            .sortedWith(compareBy<Track> { it.trackNumber }.thenBy { it.title.lowercase() })
-        FeaturedAudioPack(metadata = metadata, tracks = tracks)
+            .mapNotNull { assetPath ->
+                // 二次打包时单个文件损坏、标签异常或缓存准备失败，不应让整个专题消失。
+                runCatching {
+                    assetPath to assetPath.toFeaturedTrack(
+                        pack = configuration.metadata,
+                        override = configuration.trackOverrides[assetPath]
+                            ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
+                    )
+                }.getOrNull()
+            }
+            .sortedWith(
+                compareBy<Pair<String, Track>> { it.second.trackNumber }
+                    .thenBy { it.second.title.lowercase() }
+                    .thenBy { it.first.lowercase() }
+            )
+            .map { it.second }
+        FeaturedAudioPack(metadata = configuration.metadata, tracks = tracks)
     }
 
     suspend fun loadTracks(): List<Track> = loadPack().tracks
 
-    private fun readPackMetadata(): FeaturedPackMetadata {
+    private fun readPackConfiguration(): PackConfiguration {
         return runCatching {
             val rawJson = context.assets.open(PACK_METADATA_FILE).bufferedReader().use { it.readText() }
             val json = JSONObject(rawJson)
-            FeaturedPackMetadata(
-                title = json.textOrDefault("title", DEFAULT_TITLE),
-                eyebrow = json.textOrDefault("eyebrow", DEFAULT_EYEBROW),
-                description = json.textOrDefault("description", DEFAULT_DESCRIPTION),
-                defaultArtist = json.textOrDefault("defaultArtist", DEFAULT_ARTIST),
-                defaultAlbum = json.textOrDefault("defaultAlbum", DEFAULT_ALBUM),
-                playLabel = json.textOrDefault("playLabel", DEFAULT_PLAY_LABEL)
+            PackConfiguration(
+                metadata = FeaturedPackMetadata(
+                    title = json.textOrDefault("title", DEFAULT_TITLE),
+                    eyebrow = json.textOrDefault("eyebrow", DEFAULT_EYEBROW),
+                    description = json.textOrDefault("description", DEFAULT_DESCRIPTION),
+                    defaultArtist = json.textOrDefault("defaultArtist", DEFAULT_ARTIST),
+                    defaultAlbum = json.textOrDefault("defaultAlbum", DEFAULT_ALBUM),
+                    playLabel = json.textOrDefault("playLabel", DEFAULT_PLAY_LABEL)
+                ),
+                trackOverrides = json.trackOverrides()
             )
-        }.getOrElse { FeaturedPackMetadata() }
+        }.getOrElse { PackConfiguration() }
     }
 
     private fun JSONObject.textOrDefault(key: String, fallback: String): String =
         optString(key).trim().takeIf { it.isNotBlank() } ?: fallback
+
+    private fun JSONObject.optionalText(key: String): String? =
+        optString(key).trim().takeIf { it.isNotBlank() }
+
+    private fun JSONObject.trackOverrides(): Map<String, TrackOverride> {
+        val tracksObject = optJSONObject("tracks") ?: return emptyMap()
+        val overrides = linkedMapOf<String, TrackOverride>()
+        val keys = tracksObject.keys()
+        while (keys.hasNext()) {
+            val rawAssetPath = keys.next()
+            val assetPath = rawAssetPath.trim().replace('\\', '/')
+            val item = tracksObject.optJSONObject(rawAssetPath) ?: continue
+            if (assetPath.isBlank()) continue
+            overrides[assetPath] = TrackOverride(
+                title = item.optionalText("title"),
+                artist = item.optionalText("artist"),
+                album = item.optionalText("album"),
+                trackNumber = item.optInt("trackNumber", 0).takeIf { it > 0 },
+                year = item.optInt("year", 0).takeIf { it > 0 }
+            )
+        }
+        return overrides
+    }
 
     /**
      * 既支持标准的 featured_audio/ 目录，也支持二次打包时直接添加到任意 assets 子目录的音频。
@@ -62,7 +102,7 @@ class FeaturedAudioRepository(private val context: Context) {
         }
     }
 
-    private fun String.toFeaturedTrack(pack: FeaturedPackMetadata): Track {
+    private fun String.toFeaturedTrack(pack: FeaturedPackMetadata, override: TrackOverride?): Track {
         val fileName = substringAfterLast('/').substringBeforeLast('.')
         val fallbackTitle = fileName
             .replace(Regex("^\\s*\\d+[._ -]*"), "")
@@ -73,18 +113,18 @@ class FeaturedAudioRepository(private val context: Context) {
             ?.groupValues?.getOrNull(1)?.toIntOrNull()
             ?: 0
         val metadata = readMetadata(this)
-        val albumTitle = metadata.album ?: pack.defaultAlbum
+        val albumTitle = override?.album ?: metadata.album ?: pack.defaultAlbum
         return Track(
             id = stableAssetId(this),
-            title = metadata.title ?: fallbackTitle,
-            artist = metadata.artist ?: pack.defaultArtist,
+            title = override?.title ?: metadata.title ?: fallbackTitle,
+            artist = override?.artist ?: metadata.artist ?: pack.defaultArtist,
             album = albumTitle,
             albumId = -abs(albumTitle.hashCode().toLong()) - 2L,
             durationMs = metadata.durationMs,
             uri = resolvePlayableUri(this),
             artworkUri = featuredArtworkUri,
-            trackNumber = metadata.trackNumber ?: fallbackTrackNumber,
-            year = metadata.year ?: 0,
+            trackNumber = override?.trackNumber ?: metadata.trackNumber ?: fallbackTrackNumber,
+            year = override?.year ?: metadata.year ?: 0,
             source = TrackSource.FEATURED_ASSET
         )
     }
@@ -206,6 +246,19 @@ class FeaturedAudioRepository(private val context: Context) {
 
     private fun MediaMetadataRetriever.text(key: Int): String? =
         extractMetadata(key)?.trim()?.takeUnless { it.isBlank() || it.equals("<unknown>", true) }
+
+    private data class PackConfiguration(
+        val metadata: FeaturedPackMetadata = FeaturedPackMetadata(),
+        val trackOverrides: Map<String, TrackOverride> = emptyMap()
+    )
+
+    private data class TrackOverride(
+        val title: String? = null,
+        val artist: String? = null,
+        val album: String? = null,
+        val trackNumber: Int? = null,
+        val year: Int? = null
+    )
 
     private data class AssetMetadata(
         val title: String? = null,
