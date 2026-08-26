@@ -1748,6 +1748,26 @@ private fun QueueSheet(
     val currentIndex = remember(queue, currentTrack?.id) {
         queue.indexOfFirst { it.id == currentTrack?.id }
     }
+    val upcomingTracks = remember(queue, currentIndex) {
+        queue.drop(if (currentIndex >= 0) currentIndex + 1 else 0)
+    }
+    val upcomingDurationMs = remember(upcomingTracks) { upcomingTracks.sumOf { it.durationMs.coerceAtLeast(0L) } }
+    val unresolvedUpcomingCount = remember(upcomingTracks) { upcomingTracks.count { it.durationMs <= 0L } }
+    val queueSummary = remember(queue, currentIndex, upcomingTracks, upcomingDurationMs, unresolvedUpcomingCount) {
+        if (queue.isEmpty()) {
+            "队列为空"
+        } else {
+            buildString {
+                append("${queue.size} 首歌曲")
+                if (currentIndex >= 0) append(" · 正在播放第 ${currentIndex + 1} 首")
+                if (upcomingTracks.isNotEmpty()) {
+                    append(" · 接下来 ")
+                    append(if (upcomingDurationMs > 0L) formatTime(upcomingDurationMs) else "正在读取时长")
+                    if (unresolvedUpcomingCount > 0) append("（${unresolvedUpcomingCount} 首时长待解析）")
+                }
+            }
+        }
+    }
     LaunchedEffect(queue, currentTrack?.id) {
         if (currentIndex >= 0) {
             // 当前项上方保留分段标题，打开队列后直接落在正在播放区域。
@@ -1760,9 +1780,11 @@ private fun QueueSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("播放队列", style = MaterialTheme.typography.headlineSmall)
                     Text(
-                        if (queue.isEmpty()) "队列为空" else "${queue.size} 首歌曲${if (currentIndex >= 0) " · 正在播放第 ${currentIndex + 1} 首" else ""}",
+                        queueSummary,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 if (currentIndex > 0) TextButton(onClick = onRemovePlayed) { Text("移除已播") }
