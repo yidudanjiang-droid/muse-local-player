@@ -132,7 +132,7 @@ app/src/main/java/com/muse/localplayer/
 
 ## 正式发布构建
 
-发布变体启用 R8 代码压缩与 Android 资源收缩；这会移除未使用的 Compose 图标、代码与资源。请使用自己的签名密钥发布，**不要**将私钥或口令提交到仓库。
+发布变体启用 R8 代码压缩与 Android 资源收缩；这会移除未使用的 Compose 图标、代码与资源。`1.1.7` 进一步将不需要原始分辨率的开屏与专题视觉资源转为高质量 WebP，并移除未使用导航依赖，使 universal 正式包由约 7.6 MiB 降至约 2.9 MiB；APK 内专题音频、后台播放、通知、共存隔离、四 ABI 与 universal 输出均保持不变。请使用自己的签名密钥发布，**不要**将私钥或口令提交到仓库。
 
 ```bash
 cp keystore.properties.example keystore.properties
