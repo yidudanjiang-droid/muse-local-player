@@ -127,6 +127,7 @@ import com.muse.localplayer.BuildConfig
 import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedTrackProgram
 import com.muse.localplayer.data.LibraryTab
 import com.muse.localplayer.data.LyricLine
 import com.muse.localplayer.data.Track
@@ -1518,6 +1519,7 @@ private fun PlayerSheetWithProgress(
     val positionMs by viewModel.positionMs.collectAsStateWithLifecycle()
     val durationMs by viewModel.durationMs.collectAsStateWithLifecycle()
     val lyrics by viewModel.currentLyrics.collectAsStateWithLifecycle()
+    val program by viewModel.currentProgram.collectAsStateWithLifecycle()
     PlayerSheet(
         track = track,
         isPlaying = isPlaying,
@@ -1525,6 +1527,7 @@ private fun PlayerSheetWithProgress(
         positionMs = positionMs,
         durationMs = durationMs,
         lyrics = lyrics,
+        program = program,
         repeatMode = repeatMode,
         shuffleEnabled = shuffleEnabled,
         playbackSpeed = playbackSpeed,
@@ -1557,6 +1560,7 @@ private fun PlayerSheet(
     positionMs: Long,
     durationMs: Long,
     lyrics: List<LyricLine>,
+    program: FeaturedTrackProgram?,
     repeatMode: Int,
     shuffleEnabled: Boolean,
     playbackSpeed: Float,
@@ -1581,6 +1585,7 @@ private fun PlayerSheet(
     var isSeeking by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
     var strategyMenuExpanded by remember { mutableStateOf(false) }
+    var programExpanded by remember(track.id) { mutableStateOf(false) }
     var scrubProgress by remember { mutableFloatStateOf(progress) }
     val sliderProgress = if (isSeeking) scrubProgress else progress
     val playbackStrategy = playbackStrategyFor(repeatMode, shuffleEnabled)
@@ -1674,6 +1679,20 @@ private fun PlayerSheet(
                     if (durationMs > 0L) formatTime(durationMs) else "正在读取时长",
                     style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFFD6E1F6)
+                )
+            }
+            if (program?.hasContent == true) {
+                Spacer(Modifier.height(16.dp))
+                ProgramGuide(
+                    program = program,
+                    positionMs = positionMs,
+                    expanded = programExpanded,
+                    onToggleExpanded = { programExpanded = !programExpanded },
+                    onChapterSelect = { timestampMs ->
+                        if (durationMs > 0L) {
+                            onSeek((timestampMs.toDouble() / durationMs.toDouble()).toFloat().coerceIn(0f, 1f))
+                        }
+                    }
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -1785,6 +1804,66 @@ private fun PlayerSheet(
                 style = MaterialTheme.typography.labelMedium,
                 color = Color(0xFFD6E1F6)
             )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgramGuide(
+    program: FeaturedTrackProgram,
+    positionMs: Long,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    onChapterSelect: (Long) -> Unit
+) {
+    val activeChapterIndex = program.chapters.indexOfLast { it.timestampMs <= positionMs }
+    val activeChapter = activeChapterIndex.takeIf { it >= 0 }?.let(program.chapters::getOrNull)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = Color(0x3D26335C)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("章节与笔记", style = MaterialTheme.typography.titleSmall)
+                    activeChapter?.let { chapter ->
+                        Text(
+                            "当前 · ${formatTime(chapter.timestampMs)}  ${chapter.title}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFD6E1F6),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                TextButton(onClick = onToggleExpanded) { Text(if (expanded) "收起" else "展开") }
+            }
+            if (expanded) {
+                program.chapters.forEachIndexed { index, chapter ->
+                    TextButton(
+                        onClick = { onChapterSelect(chapter.timestampMs) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "${formatTime(chapter.timestampMs)}  ${chapter.title}",
+                            style = if (index == activeChapterIndex) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                            color = if (index == activeChapterIndex) Color.White else Color(0xFFBDCAE4),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+                program.notes.take(3).forEach { note ->
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD6E1F6),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
         }
     }

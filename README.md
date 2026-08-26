@@ -84,7 +84,7 @@ app/src/main/assets/
 }
 ```
 
-路径可写完整 assets 相对路径（如 `featured_audio/01-opening.mp3`），也可省略 `featured_audio/` 前缀。覆盖项优先于音频标签和文件名；同排序与同标题的文件会进一步按资产路径排序，保证二次打包后顺序稳定。`coverAsset` 也支持同样的路径规则与反斜杠标准化；无效路径、缺失文件或不支持格式会自动回退为 Muse 内置的原创声场主视觉。该默认视觉同时用于首页专题 Hero，用户在 `pack.json` 中配置自己的封面后仍会优先显示其主题资产。无内嵌/外部封面的设备音频则使用 Muse 的原创“声场唱片”默认封面。若在音频相同目录额外放入同名 UTF-8 `.lrc` 文件，例如 `01-序章.mp3` 与 `01-序章.lrc`，播放页会离线解析多个时间标签并在动态声场中高亮当前行；不提供 LRC 时不会联网搜索或生成歌词。单个音频损坏、标签异常或缓存准备失败会被跳过，不会让剩余专题内容消失。更多约定见 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md)。
+路径可写完整 assets 相对路径（如 `featured_audio/01-opening.mp3`），也可省略 `featured_audio/` 前缀。覆盖项优先于音频标签和文件名；同排序与同标题的文件会进一步按资产路径排序，保证二次打包后顺序稳定。`coverAsset` 也支持同样的路径规则与反斜杠标准化；无效路径、缺失文件或不支持格式会自动回退为 Muse 内置的原创声场主视觉。该默认视觉同时用于首页专题 Hero，用户在 `pack.json` 中配置自己的封面后仍会优先显示其主题资产。无内嵌/外部封面的设备音频则使用 Muse 的原创“声场唱片”默认封面。若在音频相同目录额外放入同名 UTF-8 `.lrc` 文件，例如 `01-序章.mp3` 与 `01-序章.lrc`，播放页会离线解析多个时间标签并在动态声场中高亮当前行；不提供 LRC 时不会联网搜索或生成歌词。`pack.json` 的单曲 `tracks` 覆盖项还可维护 `chapters` 与 `notes`：发布者用 `time` / `timestampMs` 标注章节，用简短 `notes` 补充节目说明；播放器会离线显示当前章节、展开笔记，并允许点按章节定位。单个音频损坏、标签异常或缓存准备失败会被跳过，不会让剩余专题内容消失。更多约定见 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md)。
 
 ### 已构建 APK 的二次打包
 

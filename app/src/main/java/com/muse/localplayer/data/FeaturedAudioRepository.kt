@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
 
@@ -21,14 +22,15 @@ class FeaturedAudioRepository(private val context: Context) {
         clearStaleMaterializedAssets()
         val configuration = readPackConfiguration()
         val artworkUri = featuredArtworkUri(configuration.metadata)
-        val tracks = listAudioAssetPaths()
+        val entries = listAudioAssetPaths()
             .mapNotNull { assetPath ->
                 // 二次打包时单个文件损坏、标签异常或缓存准备失败，不应让整个专题消失。
                 runCatching {
+                    val override = configuration.trackOverrides[assetPath]
+                        ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
                     assetPath to assetPath.toFeaturedTrack(
                         pack = configuration.metadata,
-                        override = configuration.trackOverrides[assetPath]
-                            ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")],
+                        override = override,
                         artworkUri = artworkUri
                     )
                 }.getOrNull()
@@ -38,8 +40,17 @@ class FeaturedAudioRepository(private val context: Context) {
                     .thenBy { it.second.title.lowercase() }
                     .thenBy { it.first.lowercase() }
             )
-            .map { it.second }
-        FeaturedAudioPack(metadata = configuration.metadata, tracks = tracks)
+        val tracks = entries.map { it.second }
+        val programsByTrackId = entries.mapNotNull { (assetPath, track) ->
+            val override = configuration.trackOverrides[assetPath]
+                ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
+            override?.program?.takeIf(FeaturedTrackProgram::hasContent)?.let { track.id to it }
+        }.toMap()
+        FeaturedAudioPack(
+            metadata = configuration.metadata,
+            tracks = tracks,
+            programsByTrackId = programsByTrackId
+        )
     }
 
     suspend fun loadTracks(): List<Track> = loadPack().tracks
@@ -83,10 +94,49 @@ class FeaturedAudioRepository(private val context: Context) {
                 artist = item.optionalText("artist"),
                 album = item.optionalText("album"),
                 trackNumber = item.optInt("trackNumber", 0).takeIf { it > 0 },
-                year = item.optInt("year", 0).takeIf { it > 0 }
+                year = item.optInt("year", 0).takeIf { it > 0 },
+                program = item.toFeaturedTrackProgram()
             )
         }
         return overrides
+    }
+
+    private fun JSONObject.toFeaturedTrackProgram(): FeaturedTrackProgram? {
+        val chapters = optJSONArray("chapters").toFeaturedChapters()
+        val notes = optJSONArray("notes").toProgramNotes()
+        return FeaturedTrackProgram(chapters = chapters, notes = notes).takeIf(FeaturedTrackProgram::hasContent)
+    }
+
+    private fun JSONArray?.toFeaturedChapters(): List<FeaturedChapter> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                val item = optJSONObject(index) ?: continue
+                val title = item.optionalText("title") ?: continue
+                val timestampMs = item.optLong("timestampMs", -1L).takeIf { it >= 0L }
+                    ?: item.optionalText("time")?.toTimestampMs()
+                    ?: continue
+                add(FeaturedChapter(timestampMs = timestampMs, title = title))
+            }
+        }.distinctBy { it.timestampMs to it.title }.sortedBy(FeaturedChapter::timestampMs)
+    }
+
+    private fun JSONArray?.toProgramNotes(): List<String> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                optString(index).trim().takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }.distinct()
+    }
+
+    private fun String.toTimestampMs(): Long? {
+        val match = TIMESTAMP_REGEX.matchEntire(trim()) ?: return null
+        val minutes = match.groupValues[1].toLongOrNull() ?: return null
+        val seconds = match.groupValues[2].toLongOrNull() ?: return null
+        val fraction = match.groupValues.getOrElse(3) { "" }.padEnd(3, '0').take(3).toLongOrNull() ?: 0L
+        if (seconds !in 0..59) return null
+        return minutes * 60_000L + seconds * 1_000L + fraction
     }
 
     /**
@@ -264,7 +314,8 @@ class FeaturedAudioRepository(private val context: Context) {
         val artist: String? = null,
         val album: String? = null,
         val trackNumber: Int? = null,
-        val year: Int? = null
+        val year: Int? = null,
+        val program: FeaturedTrackProgram? = null
     )
 
     private data class AssetMetadata(
@@ -313,5 +364,6 @@ class FeaturedAudioRepository(private val context: Context) {
         const val DEFAULT_PLAY_LABEL = "从头播放"
         val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "ogg", "wav", "flac")
         val IMAGE_EXTENSIONS = setOf("png", "webp", "jpg", "jpeg")
+        val TIMESTAMP_REGEX = Regex("(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?")
     }
 }

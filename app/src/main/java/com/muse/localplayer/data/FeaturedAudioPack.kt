@@ -2,7 +2,22 @@ package com.muse.localplayer.data
 
 data class FeaturedAudioPack(
     val metadata: FeaturedPackMetadata = FeaturedPackMetadata(),
-    val tracks: List<Track> = emptyList()
+    val tracks: List<Track> = emptyList(),
+    val programsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
+)
+
+/** Optional, publisher-authored context for one featured asset. */
+data class FeaturedTrackProgram(
+    val chapters: List<FeaturedChapter> = emptyList(),
+    val notes: List<String> = emptyList()
+) {
+    val hasContent: Boolean
+        get() = chapters.isNotEmpty() || notes.isNotEmpty()
+}
+
+data class FeaturedChapter(
+    val timestampMs: Long,
+    val title: String
 )
 
 data class FeaturedPackMetadata(

@@ -18,6 +18,7 @@ import androidx.media3.session.SessionToken
 import com.muse.localplayer.data.FeaturedAudioPack
 import com.muse.localplayer.data.FeaturedAudioRepository
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedTrackProgram
 import com.muse.localplayer.data.TrackSource
 import com.muse.localplayer.data.LibraryLoadResult
 import com.muse.localplayer.data.LyricLine
@@ -75,6 +76,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _currentLyrics = MutableStateFlow<List<LyricLine>>(emptyList())
     val currentLyrics = _currentLyrics.asStateFlow()
 
+    private val _currentProgram = MutableStateFlow<FeaturedTrackProgram?>(null)
+    val currentProgram = _currentProgram.asStateFlow()
+
     private val _isPlaying = MutableStateFlow(false)
     val isPlaying = _isPlaying.asStateFlow()
 
@@ -130,6 +134,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var resumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
     private var lastResumePersistenceAt = 0L
     private var cachedFeaturedPack: FeaturedAudioPack? = null
+    private var featuredProgramsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
     private var trackIndex: Map<Long, Track> = emptyMap()
     private var tracksBySource: Map<TrackSource, List<Track>> = emptyMap()
     private var timelineTrackId: String? = null
@@ -295,6 +300,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             _libraryUiState.value = LibraryUiState.Loading
             val featuredPack = loadFeaturedPackIfNeeded()
             val featured = featuredPack.tracks
+            featuredProgramsByTrackId = featuredPack.programsByTrackId
             _featuredTracks.value = featured
             _featuredPackMetadata.value = featuredPack.metadata
             when (val result = musicRepository.loadTracks()) {
@@ -368,6 +374,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 activeController.clearMediaItems()
                 resetTimelineForTrackId(null)
                 _currentTrack.value = null
+                _currentProgram.value = null
                 loadLyricsFor(null)
                 _isPlaying.value = false
             } else {
@@ -616,6 +623,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lastTrimmedQueueItems = emptyList()
         controller?.clearMediaItems()
         _currentTrack.value = null
+        _currentProgram.value = null
         loadLyricsFor(null)
         _isPlaying.value = false
         resetTimelineForTrackId(null)
@@ -915,6 +923,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         updateQueueState(restoredQueue, persist = savedQueueIsStale)
         val restoredTrack = restoredQueue.getOrNull(resumeIndex)
         _currentTrack.value = restoredTrack
+        _currentProgram.value = restoredTrack?.id?.let(featuredProgramsByTrackId::get)
         loadLyricsFor(restoredTrack)
         refreshPlaybackState()
     }
@@ -922,6 +931,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun syncCurrentTrack(mediaItem: MediaItem?) {
         val track = mediaItem?.mediaId?.toLongOrNull()?.let(trackIndex::get)
         _currentTrack.value = track
+        _currentProgram.value = track?.id?.let(featuredProgramsByTrackId::get)
         loadLyricsFor(track)
     }
 
