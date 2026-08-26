@@ -20,6 +20,39 @@ data class FeaturedChapter(
     val title: String
 )
 
+data class ChapterPlaybackState(
+    val activeChapter: FeaturedChapter?,
+    val activeIndex: Int,
+    val completedCount: Int,
+    val nextChapter: FeaturedChapter?,
+    val chapterProgress: Float,
+    val remainingInChapterMs: Long?
+) {
+    val isTransitionImminent: Boolean
+        get() = nextChapter != null && (remainingInChapterMs ?: Long.MAX_VALUE) in 0L..20_000L
+}
+
+fun FeaturedTrackProgram.chapterPlaybackState(positionMs: Long, durationMs: Long): ChapterPlaybackState {
+    val position = positionMs.coerceAtLeast(0L)
+    val activeIndex = chapters.indexOfLast { it.timestampMs <= position }
+    val activeChapter = chapters.getOrNull(activeIndex)
+    val nextChapter = chapters.getOrNull(activeIndex + 1)
+    val chapterEndMs = nextChapter?.timestampMs
+        ?: durationMs.takeIf { it > (activeChapter?.timestampMs ?: 0L) }
+    val chapterDurationMs = activeChapter?.let { chapter -> chapterEndMs?.minus(chapter.timestampMs) }
+    val chapterProgress = if (activeChapter != null && chapterDurationMs != null && chapterDurationMs > 0L) {
+        ((position - activeChapter.timestampMs).toFloat() / chapterDurationMs.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    return ChapterPlaybackState(
+        activeChapter = activeChapter,
+        activeIndex = activeIndex,
+        completedCount = activeIndex.coerceAtLeast(0),
+        nextChapter = nextChapter,
+        chapterProgress = chapterProgress,
+        remainingInChapterMs = chapterEndMs?.minus(position)?.coerceAtLeast(0L)
+    )
+}
+
 data class FeaturedPackMetadata(
     val title: String = "本期专题音频",
     val eyebrow: String = "MUSE · FEATURED",

@@ -128,6 +128,8 @@ import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.ChapterPlaybackState
+import com.muse.localplayer.data.chapterPlaybackState
 import com.muse.localplayer.data.FeaturedTrackProgram
 import com.muse.localplayer.data.LibraryTab
 import com.muse.localplayer.data.LyricLine
@@ -1813,6 +1815,13 @@ private fun PlayerSheet(
                     color = Color(0xFFD6E1F6)
                 )
             }
+            if (program?.chapters?.isNotEmpty() == true) {
+                Spacer(Modifier.height(14.dp))
+                ChapterFlowCard(
+                    state = program.chapterPlaybackState(positionMs = positionMs, durationMs = durationMs),
+                    chapterCount = program.chapters.size
+                )
+            }
             if (program?.hasContent == true) {
                 Spacer(Modifier.height(16.dp))
                 ProgramGuide(
@@ -1936,6 +1945,67 @@ private fun PlayerSheet(
                 style = MaterialTheme.typography.labelMedium,
                 color = Color(0xFFD6E1F6)
             )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChapterFlowCard(state: ChapterPlaybackState, chapterCount: Int) {
+    val active = state.activeChapter
+    val next = state.nextChapter
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = if (state.isTransitionImminent) Color(0x5B3B8EFF) else Color(0x3D26335C)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (state.isTransitionImminent) "下一章即将开始" else "章节进度",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "已完成 ${state.completedCount.coerceAtMost(chapterCount)}/$chapterCount",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFFD6E1F6)
+                )
+            }
+            active?.let { chapter ->
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "当前 · ${chapter.title}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { state.chapterProgress },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color(0x454E5F86)
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            when {
+                next != null && state.remainingInChapterMs != null -> Text(
+                    "接下来 · ${next.title} · ${formatTime(next.timestampMs)} · ${formatTime(state.remainingInChapterMs)} 后进入",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (state.isTransitionImminent) Color.White else Color(0xFFD6E1F6),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                active != null -> Text(
+                    "最后一章 · 本曲结束后将完成本次章节收听",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFFD6E1F6)
+                )
+                else -> Text(
+                    "章节尚未开始，播放后会自动显示进度与下一章前瞻。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFFD6E1F6)
+                )
             }
         }
     }
