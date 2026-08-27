@@ -46,7 +46,8 @@ internal fun LibraryContent(
     onAddTracksToQueue: (List<Track>) -> Unit,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
     onShowSongs: () -> Unit,
-    onMore: (Track) -> Unit
+    onMore: (Track) -> Unit,
+    onOpenFeaturedDetail: () -> Unit
 ) {
     val songsForScreen = remember(visibleTracks, isSearching) {
         if (isSearching) visibleTracks else visibleTracks.filterNot { it.isFeaturedAsset }
@@ -88,7 +89,8 @@ internal fun LibraryContent(
             onPlayFeaturedTracks = onPlayFeaturedTracks,
             onAddFeaturedTracksToQueue = { onAddTracksToQueue(featuredTracks) },
             onSongsClick = onShowSongs,
-            onMore = onMore
+            onMore = onMore,
+            onOpenFeaturedDetail = onOpenFeaturedDetail
         )
         LibraryTab.SONGS -> SongsScreen(
             tracks = songsForScreen,

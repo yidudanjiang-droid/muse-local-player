@@ -101,6 +101,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _featuredPackMetadata = MutableStateFlow(FeaturedPackMetadata())
     val featuredPackMetadata = _featuredPackMetadata.asStateFlow()
 
+    /** Complete publisher-authored program index for the current APK topic. */
+    private val _featuredPrograms = MutableStateFlow<Map<Long, FeaturedTrackProgram>>(emptyMap())
+    val featuredPrograms = _featuredPrograms.asStateFlow()
+
     private val _libraryUiState = MutableStateFlow<LibraryUiState>(LibraryUiState.Idle)
     val libraryUiState = _libraryUiState.asStateFlow()
 
@@ -429,9 +433,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val featuredPack = loadFeaturedPackIfNeeded()
             val featured = featuredPack.tracks
             featuredProgramsByTrackId = featuredPack.programsByTrackId
-        _featuredTracks.value = featured
-        refreshFeaturedJourney()
-        _featuredPackMetadata.value = featuredPack.metadata
+            _featuredPrograms.value = featuredPack.programsByTrackId
+            _featuredTracks.value = featured
+            refreshFeaturedJourney()
+            _featuredPackMetadata.value = featuredPack.metadata
             when (val result = musicRepository.loadTracks()) {
                 is LibraryLoadResult.Success -> {
                     updateTracks(featured, result.tracks)
@@ -585,6 +590,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val featuredQueue = _featuredTracks.value
         if (featuredQueue.isEmpty()) return
         setQueue(featuredQueue, featuredQueue.first(), shouldPlay = true)
+    }
+
+    /**
+     * Plays a program item or chapter while preserving the full featured-topic queue.
+     * This keeps next/previous, completion progress and resume behavior scoped to the APK topic.
+     */
+    fun playFeaturedTrackAt(track: Track, positionMs: Long = 0L) {
+        val featuredQueue = _featuredTracks.value
+        if (featuredQueue.none { it.id == track.id }) {
+            play(track)
+            return
+        }
+        setQueue(featuredQueue, track, shouldPlay = false)
+        val safePosition = positionMs.coerceAtLeast(0L)
+        val feedback = if (safePosition > 0L) {
+            "已从 ${formatTimestamp(safePosition)} 开始《${track.title}》。"
+        } else {
+            "正在播放专题节目《${track.title}》。"
+        }
+        playTrackAtPosition(track, safePosition, feedback)
     }
 
     fun continueFeaturedJourney() {

@@ -25,11 +25,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -164,6 +166,7 @@ fun MuseMusicApp(
     val featuredTracks by viewModel.featuredTracks.collectAsStateWithLifecycle()
     val featuredJourney by viewModel.featuredJourney.collectAsStateWithLifecycle()
     val featuredPackMetadata by viewModel.featuredPackMetadata.collectAsStateWithLifecycle()
+    val featuredPrograms by viewModel.featuredPrograms.collectAsStateWithLifecycle()
     val libraryUiState by viewModel.libraryUiState.collectAsStateWithLifecycle()
     val queue by viewModel.queue.collectAsStateWithLifecycle()
     val favoriteIds by viewModel.favoriteIds.collectAsStateWithLifecycle()
@@ -192,6 +195,7 @@ fun MuseMusicApp(
     var playerOpen by remember { mutableStateOf(false) }
     var queueOpen by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
+    var featuredDetailOpen by remember { mutableStateOf(false) }
     var actionTrack by remember { mutableStateOf<Track?>(null) }
     LaunchedEffect(searchText) {
         if (searchText.isBlank()) {
@@ -418,7 +422,8 @@ fun MuseMusicApp(
                     },
                     onPlayAlbum = viewModel::playAlbum,
                     onShowSongs = { selectedTab = LibraryTab.SONGS },
-                    onMore = { actionTrack = it }
+                    onMore = { actionTrack = it },
+                    onOpenFeaturedDetail = { featuredDetailOpen = true }
                 )
             } else {
                 Row(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
@@ -474,7 +479,8 @@ fun MuseMusicApp(
                             },
                             onPlayAlbum = viewModel::playAlbum,
                             onShowSongs = { selectedTab = LibraryTab.SONGS },
-                            onMore = { actionTrack = it }
+                            onMore = { actionTrack = it },
+                            onOpenFeaturedDetail = { featuredDetailOpen = true }
                         )
                     }
                 }
@@ -528,6 +534,8 @@ fun MuseMusicApp(
             sleepAfterCurrentTrackEnabled = sleepAfterCurrentTrackId == currentTrack!!.id,
             loopSegment = loopSegment,
             isFavorite = currentTrack!!.id in favoriteIds,
+            featuredJourney = featuredJourney,
+            featuredMetadata = featuredPackMetadata,
             onDismiss = { playerOpen = false },
             onToggle = viewModel::togglePlayback,
             onNext = viewModel::skipNext,
@@ -550,6 +558,10 @@ fun MuseMusicApp(
             onOpenQueue = {
                 playerOpen = false
                 queueOpen = true
+            },
+            onOpenFeaturedDetail = {
+                playerOpen = false
+                featuredDetailOpen = true
             }
         )
     }
@@ -614,6 +626,45 @@ fun MuseMusicApp(
 
     if (aboutOpen) {
         AboutSheet(onDismiss = { aboutOpen = false })
+    }
+
+    if (featuredDetailOpen) {
+        FeaturedTopicSheet(
+            metadata = featuredPackMetadata,
+            tracks = featuredTracks,
+            programsByTrackId = featuredPrograms,
+            journey = featuredJourney,
+            currentFeaturedTrackId = currentTrack?.takeIf(Track::isFeaturedAsset)?.id,
+            onDismiss = { featuredDetailOpen = false },
+            onPlayAll = {
+                viewModel.playFeaturedTracks()
+                featuredDetailOpen = false
+                playerOpen = true
+            },
+            onContinue = {
+                viewModel.continueFeaturedJourney()
+                featuredDetailOpen = false
+                playerOpen = true
+            },
+            onRestart = {
+                viewModel.restartFeaturedJourney()
+                featuredDetailOpen = false
+                playerOpen = true
+            },
+            onAddAllToQueue = {
+                val addedCount = viewModel.addTracksToQueue(featuredTracks)
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        if (addedCount > 0) "已将 ${addedCount} 首专题节目加入播放队列" else "专题节目已全部在播放队列中"
+                    )
+                }
+            },
+            onPlayTrackAt = { track, positionMs ->
+                viewModel.playFeaturedTrackAt(track, positionMs)
+                featuredDetailOpen = false
+                playerOpen = true
+            }
+        )
     }
 }
 
@@ -697,7 +748,8 @@ internal fun HomeScreen(
     onPlayFeaturedTracks: () -> Unit,
     onAddFeaturedTracksToQueue: () -> Unit,
     onSongsClick: () -> Unit,
-    onMore: (Track) -> Unit
+    onMore: (Track) -> Unit,
+    onOpenFeaturedDetail: () -> Unit
 ) {
     val featuredDuration = featuredTracks.sumOf { it.durationMs }
     LazyColumn(
@@ -729,7 +781,8 @@ internal fun HomeScreen(
                 trackCount = featuredTracks.size,
                 totalDurationMs = featuredDuration,
                 onPlay = if (featuredTracks.isEmpty()) null else onPlayFeaturedTracks,
-                onAddToQueue = if (featuredTracks.isEmpty()) null else onAddFeaturedTracksToQueue
+                onAddToQueue = if (featuredTracks.isEmpty()) null else onAddFeaturedTracksToQueue,
+                onOpenTopic = onOpenFeaturedDetail
             )
         }
         if (featuredJourney.totalCount > 0) {
@@ -744,14 +797,21 @@ internal fun HomeScreen(
         if (featuredTracks.isEmpty()) {
             item { EmptyFeaturedAudioCard(featuredMetadata) }
         } else {
-            item { SectionHeader("本期曲目", "全部播放", onPlayFeaturedTracks) }
-            items(featuredTracks, key = { it.id }) { track ->
+            item { SectionHeader("本期曲目", "完整节目单", onOpenFeaturedDetail) }
+            items(featuredTracks.take(HOME_PREVIEW_LIMIT), key = { it.id }) { track ->
                 TrackListItem(
                     track = track,
                     isFeaturedCompleted = track.id in featuredJourney.completedTrackIds,
                     onClick = { onPlay(track) },
                     onMore = { onMore(track) }
                 )
+            }
+            if (featuredTracks.size > HOME_PREVIEW_LIMIT) {
+                item {
+                    OutlinedButton(onClick = onOpenFeaturedDetail, modifier = Modifier.fillMaxWidth()) {
+                        Text("查看全部 ${featuredTracks.size} 首节目与章节")
+                    }
+                }
             }
         }
         item {
@@ -841,12 +901,12 @@ private fun FeaturedPackageHero(
     trackCount: Int,
     totalDurationMs: Long,
     onPlay: (() -> Unit)?,
-    onAddToQueue: (() -> Unit)?
+    onAddToQueue: (() -> Unit)?,
+    onOpenTopic: () -> Unit
 ) {
     Card(
-        onClick = { onPlay?.invoke() },
-        enabled = onPlay != null,
-        modifier = Modifier.fillMaxWidth().height(238.dp),
+        onClick = onOpenTopic,
+        modifier = Modifier.fillMaxWidth().height(258.dp),
         shape = MaterialTheme.shapes.extraLarge,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
     ) {
@@ -899,14 +959,18 @@ private fun FeaturedPackageHero(
                                 Spacer(Modifier.width(8.dp))
                                 Text(metadata.playLabel)
                             }
-                            if (onAddToQueue != null) {
-                                OutlinedButton(onClick = onAddToQueue) {
-                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("加入队列")
-                                }
+                            OutlinedButton(onClick = onOpenTopic) {
+                                Icon(Icons.Default.LibraryMusic, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("节目单")
                             }
                         }
+                        if (onAddToQueue != null) {
+                            TextButton(onClick = onAddToQueue) { Text("加入完整播放队列") }
+                        }
+                    } else {
+                        Spacer(Modifier.height(12.dp))
+                        FilledTonalButton(onClick = onOpenTopic) { Text("查看专题放入方式") }
                     }
                 }
             }
@@ -1054,6 +1118,294 @@ private fun FeaturedJourneyCard(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FeaturedTopicSheet(
+    metadata: FeaturedPackMetadata,
+    tracks: List<Track>,
+    programsByTrackId: Map<Long, FeaturedTrackProgram>,
+    journey: PlayerViewModel.FeaturedJourneyState,
+    currentFeaturedTrackId: Long?,
+    onDismiss: () -> Unit,
+    onPlayAll: () -> Unit,
+    onContinue: () -> Unit,
+    onRestart: () -> Unit,
+    onAddAllToQueue: () -> Unit,
+    onPlayTrackAt: (Track, Long) -> Unit
+) {
+    val totalDurationMs = remember(tracks) { tracks.sumOf(Track::durationMs) }
+    val chapterCount = remember(programsByTrackId) { programsByTrackId.values.sumOf { it.chapters.size } }
+    val hasPrograms = chapterCount > 0 || programsByTrackId.values.any(FeaturedTrackProgram::hasContent)
+    val resumeTrack = journey.resumeTrack
+    val nextTrack = journey.nextTrack
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        containerColor = Color.Transparent,
+        contentColor = Color.White
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().heightIn(max = 760.dp)) {
+            AsyncImage(
+                model = R.drawable.muse_journey_deck,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Brush.verticalGradient(listOf(Color(0xF0081028), Color(0xFC10182E))))
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 36.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = MaterialTheme.shapes.small, color = Color.White.copy(alpha = 0.14f)) {
+                            Text(
+                                metadata.eyebrow,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onDismiss) { Text("收起") }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text("专题全览", style = MaterialTheme.typography.labelLarge, color = Color(0xFFAEC6FF))
+                    Spacer(Modifier.height(4.dp))
+                    Text(metadata.title, style = MaterialTheme.typography.displaySmall, color = Color.White)
+                    metadata.identityLabel?.let {
+                        Spacer(Modifier.height(6.dp))
+                        Text(it, style = MaterialTheme.typography.titleMedium, color = Color(0xFFE0E9FF))
+                    }
+                    metadata.editionLabel?.let {
+                        Spacer(Modifier.height(5.dp))
+                        Text(it, style = MaterialTheme.typography.labelLarge, color = Color(0xFFAEC6FF))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(metadata.description, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD6E1F6))
+                }
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FeaturedTopicStat("曲目", tracks.size.toString(), Modifier.weight(1f))
+                        FeaturedTopicStat("时长", if (totalDurationMs > 0L) formatTime(totalDurationMs) else "待读取", Modifier.weight(1f))
+                        FeaturedTopicStat("章节", chapterCount.toString(), Modifier.weight(1f))
+                    }
+                }
+                if (tracks.isEmpty()) {
+                    item { EmptyFeaturedAudioCard(metadata) }
+                } else {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.12f))
+                        ) {
+                            Column(modifier = Modifier.padding(18.dp)) {
+                                Text(
+                                    if (journey.isComplete) "这一期已完整收听" else "收听进度 · ${journey.completedCount}/${journey.totalCount}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color.White
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    when {
+                                        journey.isComplete -> "从头再听会开启新的收听顺序，原有书签仍会保留。"
+                                        resumeTrack != null -> "将在《${resumeTrack.title}》的 ${formatTime(journey.resumePositionMs)} 继续。"
+                                        nextTrack != null -> "下一首是《${nextTrack.title}》，也可以在下方节目单中任意进入。"
+                                        else -> "从第一首开始，按专题顺序连续收听。"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color(0xFFD6E1F6)
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                androidx.compose.material3.LinearProgressIndicator(
+                                    progress = { if (journey.totalCount > 0) journey.completedCount.toFloat() / journey.totalCount else 0f },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = Color(0xFFC6D8FF),
+                                    trackColor = Color.White.copy(alpha = 0.16f)
+                                )
+                                Spacer(Modifier.height(14.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    FilledTonalButton(onClick = onPlayAll) {
+                                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("从头播放")
+                                    }
+                                    OutlinedButton(onClick = if (journey.isComplete) onRestart else onContinue) {
+                                        Icon(Icons.Default.Replay, null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(if (journey.isComplete) "重新开始" else "继续")
+                                    }
+                                }
+                                TextButton(onClick = onAddAllToQueue, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("加入完整专题队列")
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        Column {
+                            Text("节目单", style = MaterialTheme.typography.titleLarge, color = Color.White)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                if (hasPrograms) "点击曲目开始播放；已配置的章节可直接进入对应段落。" else "按曲目顺序组织。后续可在 pack.json 为曲目补充章节与节目笔记。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFB6C6E9)
+                            )
+                        }
+                    }
+                    itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
+                        FeaturedProgramListItem(
+                            index = index + 1,
+                            track = track,
+                            program = programsByTrackId[track.id],
+                            completed = track.id in journey.completedTrackIds,
+                            isCurrent = currentFeaturedTrackId == track.id,
+                            onPlay = { onPlayTrackAt(track, 0L) },
+                            onPlayChapter = { positionMs -> onPlayTrackAt(track, positionMs) }
+                        )
+                    }
+                    if (metadata.listeningGuide != null) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.extraLarge,
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF24365D))
+                            ) {
+                                Column(modifier = Modifier.padding(18.dp)) {
+                                    Text("策展人提示", style = MaterialTheme.typography.labelLarge, color = Color(0xFFC6D8FF))
+                                    Spacer(Modifier.height(7.dp))
+                                    Text(metadata.listeningGuide, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedTopicStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        color = Color.White.copy(alpha = 0.12f)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = Color(0xFFB6C6E9))
+            Spacer(Modifier.height(3.dp))
+            Text(value, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun FeaturedProgramListItem(
+    index: Int,
+    track: Track,
+    program: FeaturedTrackProgram?,
+    completed: Boolean,
+    isCurrent: Boolean,
+    onPlay: () -> Unit,
+    onPlayChapter: (Long) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                isCurrent -> Color(0xFF2A4478)
+                completed -> Color.White.copy(alpha = 0.14f)
+                else -> Color.White.copy(alpha = 0.09f)
+            }
+        )
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onPlay),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(modifier = Modifier.size(40.dp), shape = CircleShape, color = Color.White.copy(alpha = 0.15f)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (completed) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = "已完成", tint = Color(0xFFC6D8FF), modifier = Modifier.size(22.dp))
+                        } else {
+                            Text(index.toString(), style = MaterialTheme.typography.labelLarge, color = Color.White)
+                        }
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (isCurrent) "正在播放" else if (completed) "已完成" else "专题曲目 ${index.toString().padStart(2, '0')}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isCurrent) Color(0xFFC6D8FF) else Color(0xFFB6C6E9)
+                    )
+                    Text(track.title, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        buildString {
+                            append(track.artist)
+                            if (track.durationMs > 0L) append(" · ${formatTime(track.durationMs)}")
+                            program?.chapters?.takeIf { it.isNotEmpty() }?.let { append(" · ${it.size} 个章节") }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFD6E1F6),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Icon(Icons.Default.PlayArrow, contentDescription = "播放 ${track.title}", tint = Color.White)
+            }
+            val chapters = program?.chapters.orEmpty()
+            if (chapters.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+                Spacer(Modifier.height(4.dp))
+                chapters.take(3).forEach { chapter ->
+                    TextButton(onClick = { onPlayChapter(chapter.timestampMs) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "${formatTime(chapter.timestampMs)}  ${chapter.title}",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Start
+                        )
+                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(16.dp))
+                    }
+                }
+                if (chapters.size > 3) {
+                    Text(
+                        "另有 ${chapters.size - 3} 个章节可在播放页查看",
+                        modifier = Modifier.padding(start = 12.dp, top = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFB6C6E9)
+                    )
+                }
+            }
+            program?.notes?.firstOrNull()?.let { note ->
+                Spacer(Modifier.height(7.dp))
+                Text(
+                    note,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFB6C6E9),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -1848,6 +2200,49 @@ private fun MiniPlayer(
 }
 
 @Composable
+private fun FeaturedNowPlayingContext(
+    metadata: FeaturedPackMetadata,
+    journey: PlayerViewModel.FeaturedJourneyState,
+    track: Track,
+    onOpenTopic: () -> Unit
+) {
+    Card(
+        onClick = onOpenTopic,
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF20365F))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier.size(38.dp),
+                shape = CircleShape,
+                color = Color.White.copy(alpha = 0.14f)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = Color(0xFFC6D8FF), modifier = Modifier.size(20.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("正在收听专题", style = MaterialTheme.typography.labelMedium, color = Color(0xFFC6D8FF))
+                Text(metadata.title, style = MaterialTheme.typography.titleSmall, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "《${track.title}》 · 已完成 ${journey.completedCount}/${journey.totalCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFD6E1F6),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            TextButton(onClick = onOpenTopic) { Text("节目单") }
+        }
+    }
+}
+
+@Composable
 private fun PlayerSheetWithProgress(
     viewModel: PlayerViewModel,
     track: Track,
@@ -1861,6 +2256,8 @@ private fun PlayerSheetWithProgress(
     sleepAfterCurrentTrackEnabled: Boolean,
     loopSegment: PlayerViewModel.LoopSegment,
     isFavorite: Boolean,
+    featuredJourney: PlayerViewModel.FeaturedJourneyState,
+    featuredMetadata: FeaturedPackMetadata,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
@@ -1878,7 +2275,8 @@ private fun PlayerSheetWithProgress(
     onClearLoop: () -> Unit,
     onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
-    onOpenQueue: () -> Unit
+    onOpenQueue: () -> Unit,
+    onOpenFeaturedDetail: () -> Unit
 ) {
     val progress by viewModel.playbackProgress.collectAsStateWithLifecycle()
     val positionMs by viewModel.positionMs.collectAsStateWithLifecycle()
@@ -1904,6 +2302,8 @@ private fun PlayerSheetWithProgress(
         sleepAfterCurrentTrackEnabled = sleepAfterCurrentTrackEnabled,
         loopSegment = loopSegment,
         isFavorite = isFavorite,
+        featuredJourney = featuredJourney,
+        featuredMetadata = featuredMetadata,
         onDismiss = onDismiss,
         onToggle = onToggle,
         onNext = onNext,
@@ -1921,7 +2321,8 @@ private fun PlayerSheetWithProgress(
         onClearLoop = onClearLoop,
         onAddBookmark = onAddBookmark,
         onToggleFavorite = onToggleFavorite,
-        onOpenQueue = onOpenQueue
+        onOpenQueue = onOpenQueue,
+        onOpenFeaturedDetail = onOpenFeaturedDetail
     )
 }
 
@@ -1945,6 +2346,8 @@ private fun PlayerSheet(
     sleepAfterCurrentTrackEnabled: Boolean,
     loopSegment: PlayerViewModel.LoopSegment,
     isFavorite: Boolean,
+    featuredJourney: PlayerViewModel.FeaturedJourneyState,
+    featuredMetadata: FeaturedPackMetadata,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
@@ -1962,7 +2365,8 @@ private fun PlayerSheet(
     onClearLoop: () -> Unit,
     onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
-    onOpenQueue: () -> Unit
+    onOpenQueue: () -> Unit,
+    onOpenFeaturedDetail: () -> Unit
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var speedMenuExpanded by remember { mutableStateOf(false) }
@@ -2039,6 +2443,15 @@ private fun PlayerSheet(
                 IconButton(onClick = onToggleFavorite) {
                     Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, contentDescription = if (isFavorite) "取消收藏" else "加入收藏", tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+            if (track.isFeaturedAsset) {
+                Spacer(Modifier.height(14.dp))
+                FeaturedNowPlayingContext(
+                    metadata = featuredMetadata,
+                    journey = featuredJourney,
+                    track = track,
+                    onOpenTopic = onOpenFeaturedDetail
+                )
             }
             Spacer(Modifier.height(16.dp))
             Slider(
