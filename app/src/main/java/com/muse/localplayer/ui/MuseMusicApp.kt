@@ -13,6 +13,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -709,7 +711,7 @@ internal fun HomeScreen(
     ) {
         item {
             Column {
-                Text("精选专题", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("本期策展", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(4.dp))
                 Text(featuredMetadata.title, style = MaterialTheme.typography.displaySmall)
                 Spacer(Modifier.height(8.dp))
@@ -730,9 +732,6 @@ internal fun HomeScreen(
                 onAddToQueue = if (featuredTracks.isEmpty()) null else onAddFeaturedTracksToQueue
             )
         }
-        item {
-            FeaturedIdentityGuide(metadata = featuredMetadata, trackCount = featuredTracks.size)
-        }
         if (featuredJourney.totalCount > 0) {
             item {
                 FeaturedJourneyCard(
@@ -741,6 +740,22 @@ internal fun HomeScreen(
                     onRestart = onRestartFeaturedJourney
                 )
             }
+        }
+        if (featuredTracks.isEmpty()) {
+            item { EmptyFeaturedAudioCard(featuredMetadata) }
+        } else {
+            item { SectionHeader("本期曲目", "全部播放", onPlayFeaturedTracks) }
+            items(featuredTracks, key = { it.id }) { track ->
+                TrackListItem(
+                    track = track,
+                    isFeaturedCompleted = track.id in featuredJourney.completedTrackIds,
+                    onClick = { onPlay(track) },
+                    onMore = { onMore(track) }
+                )
+            }
+        }
+        item {
+            FeaturedIdentityGuide(metadata = featuredMetadata, trackCount = featuredTracks.size)
         }
         item {
             SleepTimerCard(
@@ -771,19 +786,6 @@ internal fun HomeScreen(
             item { SectionHeader("最近加入", "设备资料库", onSongsClick) }
             items(recentlyAdded, key = { "recent_${it.id}" }) { track ->
                 TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
-            }
-        }
-        if (featuredTracks.isEmpty()) {
-            item { EmptyFeaturedAudioCard(featuredMetadata) }
-        } else {
-            item { SectionHeader("专题曲目", "全部播放", onPlayFeaturedTracks) }
-            items(featuredTracks, key = { it.id }) { track ->
-                TrackListItem(
-                    track = track,
-                    isFeaturedCompleted = track.id in featuredJourney.completedTrackIds,
-                    onClick = { onPlay(track) },
-                    onMore = { onMore(track) }
-                )
             }
         }
         item {
@@ -947,65 +949,110 @@ private fun FeaturedJourneyCard(
     val progress = if (journey.totalCount > 0) {
         journey.completedCount.toFloat() / journey.totalCount.toFloat()
     } else 0f
+    val resumeTrack = journey.resumeTrack
+    val nextTrack = journey.nextTrack
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().height(244.dp),
         shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(
-            containerColor = if (journey.isComplete) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
-        )
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
-        Column(modifier = Modifier.padding(20.dp)) {
-            Text(
-                if (journey.isComplete) "本期已完成" else "专题旅程",
-                style = MaterialTheme.typography.labelLarge,
-                color = if (journey.isComplete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = R.drawable.muse_journey_deck,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
             )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (journey.isComplete) "已完整收听本期专题" else "已完成 ${journey.completedCount}/${journey.totalCount} 首",
-                style = MaterialTheme.typography.titleLarge
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0x20000000), Color(0xBB07102A))
+                        )
+                    )
             )
-            Spacer(Modifier.height(10.dp))
-            androidx.compose.material3.LinearProgressIndicator(
-                progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth(),
-                color = if (journey.isComplete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f)
-            )
-            Spacer(Modifier.height(10.dp))
-            if (journey.isComplete) {
-                Text("从头再听可重新开启本期旅程，旧的章节、歌词和书签仍会保留。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f))
-                Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = onRestart) {
-                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("重新开始")
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(22.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = Color.White.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            if (journey.isComplete) "本期完成" else "收听旅程",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.White.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            "${journey.completedCount}/${journey.totalCount}",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White
+                        )
+                    }
                 }
-            } else {
-                val resumeTrack = journey.resumeTrack
-                val nextTrack = journey.nextTrack
-                Text(
-                    when {
-                        resumeTrack != null -> "断点继续 · ${resumeTrack.title} · ${formatTime(journey.resumePositionMs)}"
-                        nextTrack != null -> "下一步 · ${nextTrack.title} · ${nextTrack.artist}"
-                        else -> "从头播放即可开始本期旅程。"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(12.dp))
-                FilledTonalButton(onClick = onContinue) {
-                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
+                Column {
                     Text(
                         when {
-                            resumeTrack != null -> "从 ${formatTime(journey.resumePositionMs)} 继续"
-                            journey.completedCount == 0 -> "开始旅程"
-                            else -> "继续旅程"
-                        }
+                            journey.isComplete -> "这一期，已经听完"
+                            resumeTrack != null -> "从上次停下的地方回来"
+                            journey.completedCount == 0 -> "从第一首，走进这一期"
+                            else -> "下一段内容，正在等你"
+                        },
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color.White
                     )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        when {
+                            journey.isComplete -> "从头再听会开启一段新的旅程，原有书签仍会保留。"
+                            resumeTrack != null -> "${resumeTrack.title} · ${formatTime(journey.resumePositionMs)} 处继续"
+                            nextTrack != null -> "下一首 · ${nextTrack.title} · ${nextTrack.artist}"
+                            else -> "从完整的专题顺序开始收听。"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.88f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.24f)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    FilledTonalButton(
+                        onClick = if (journey.isComplete) onRestart else onContinue,
+                        colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                            containerColor = Color.White.copy(alpha = 0.92f),
+                            contentColor = Color(0xFF121A35)
+                        )
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            when {
+                                journey.isComplete -> "从头再听"
+                                resumeTrack != null -> "继续收听"
+                                journey.completedCount == 0 -> "开启旅程"
+                                else -> "继续下一首"
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -1941,6 +1988,7 @@ private fun PlayerSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xD9121A31))
+                    .verticalScroll(rememberScrollState())
                     .padding(start = 28.dp, end = 28.dp, bottom = 30.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -2018,6 +2066,34 @@ private fun PlayerSheet(
                     style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFFD6E1F6)
                 )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onPrevious, modifier = Modifier.size(56.dp)) {
+                    Icon(Icons.Default.SkipPrevious, contentDescription = "上一首", modifier = Modifier.size(34.dp))
+                }
+                FilledIconButton(
+                    onClick = onToggle,
+                    modifier = Modifier.size(72.dp),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    Icon(
+                        if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = "播放或暂停",
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+                IconButton(onClick = onNext, modifier = Modifier.size(56.dp)) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "下一首", modifier = Modifier.size(34.dp))
+                }
             }
             if (durationMs > 0L) {
                 Spacer(Modifier.height(10.dp))
@@ -2109,23 +2185,6 @@ private fun PlayerSheet(
                         }
                     }
                 )
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onPrevious, modifier = Modifier.size(56.dp)) {
-                    Icon(Icons.Default.SkipPrevious, contentDescription = "上一首", modifier = Modifier.size(34.dp))
-                }
-                FilledIconButton(
-                    onClick = onToggle,
-                    modifier = Modifier.size(72.dp),
-                    shape = CircleShape,
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
-                ) {
-                    Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "播放或暂停", modifier = Modifier.size(36.dp))
-                }
-                IconButton(onClick = onNext, modifier = Modifier.size(56.dp)) {
-                    Icon(Icons.Default.SkipNext, contentDescription = "下一首", modifier = Modifier.size(34.dp))
-                }
             }
             Spacer(Modifier.height(20.dp))
             Box(modifier = Modifier.fillMaxWidth()) {
