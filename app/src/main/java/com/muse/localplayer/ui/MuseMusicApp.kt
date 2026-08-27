@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
@@ -1607,7 +1609,8 @@ private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit) {
     )
 }
 
-private const val HOME_PREVIEW_LIMIT = 6
+private const val QUICK_SEEK_MS = 15_000L
+private const val HOME_PREVIEW_LIMIT = 5
 
 private enum class SongSortMode(val label: String) {
     TITLE("标题"),
@@ -1945,6 +1948,37 @@ private fun PlayerSheet(
                     style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFFD6E1F6)
                 )
+            }
+            if (durationMs > 0L) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    AssistChip(
+                        onClick = {
+                            onSeek(
+                                ((positionMs - QUICK_SEEK_MS).coerceAtLeast(0L).toDouble() / durationMs.toDouble())
+                                    .toFloat()
+                            )
+                        },
+                        enabled = positionMs > 0L,
+                        label = { Text("后退 15 秒") },
+                        leadingIcon = { Icon(Icons.Default.Replay10, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    AssistChip(
+                        onClick = {
+                            onSeek(
+                                ((positionMs + QUICK_SEEK_MS).coerceAtMost(durationMs).toDouble() / durationMs.toDouble())
+                                    .toFloat()
+                            )
+                        },
+                        enabled = positionMs < durationMs,
+                        label = { Text("前进 15 秒") },
+                        leadingIcon = { Icon(Icons.Default.Forward10, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                    )
+                }
             }
             if (program?.chapters?.isNotEmpty() == true) {
                 Spacer(Modifier.height(14.dp))
