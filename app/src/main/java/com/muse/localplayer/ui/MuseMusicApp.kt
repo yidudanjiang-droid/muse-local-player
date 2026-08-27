@@ -174,6 +174,7 @@ fun MuseMusicApp(
     val recentlyAdded by viewModel.recentlyAdded.collectAsStateWithLifecycle()
     val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsStateWithLifecycle()
     val sleepAfterCurrentTrackId by viewModel.sleepAfterCurrentTrackId.collectAsStateWithLifecycle()
+    val loopSegment by viewModel.loopSegment.collectAsStateWithLifecycle()
     val playerMessage by viewModel.playerMessage.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
@@ -520,6 +521,7 @@ fun MuseMusicApp(
             fadeTransitionsEnabled = fadeTransitionsEnabled,
             sleepTimerRemainingMs = sleepTimerRemainingMs,
             sleepAfterCurrentTrackEnabled = sleepAfterCurrentTrackId == currentTrack!!.id,
+            loopSegment = loopSegment,
             isFavorite = currentTrack!!.id in favoriteIds,
             onDismiss = { playerOpen = false },
             onToggle = viewModel::togglePlayback,
@@ -535,6 +537,9 @@ fun MuseMusicApp(
             onSetSleepTimer = viewModel::setSleepTimer,
             onCancelSleepTimer = viewModel::cancelSleepTimer,
             onSetSleepAfterCurrentTrack = viewModel::setSleepAfterCurrentTrack,
+            onSetLoopStart = viewModel::setLoopStart,
+            onSetLoopEnd = viewModel::setLoopEnd,
+            onClearLoop = viewModel::clearLoopSegment,
             onAddBookmark = viewModel::addBookmark,
             onToggleFavorite = { viewModel.toggleFavorite(currentTrack!!) },
             onOpenQueue = {
@@ -1804,6 +1809,7 @@ private fun PlayerSheetWithProgress(
     fadeTransitionsEnabled: Boolean,
     sleepTimerRemainingMs: Long,
     sleepAfterCurrentTrackEnabled: Boolean,
+    loopSegment: PlayerViewModel.LoopSegment,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1817,6 +1823,9 @@ private fun PlayerSheetWithProgress(
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
     onSetSleepAfterCurrentTrack: (Boolean) -> Unit,
+    onSetLoopStart: () -> Unit,
+    onSetLoopEnd: () -> Unit,
+    onClearLoop: () -> Unit,
     onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
@@ -1843,6 +1852,7 @@ private fun PlayerSheetWithProgress(
         fadeTransitionsEnabled = fadeTransitionsEnabled,
         sleepTimerRemainingMs = sleepTimerRemainingMs,
         sleepAfterCurrentTrackEnabled = sleepAfterCurrentTrackEnabled,
+        loopSegment = loopSegment,
         isFavorite = isFavorite,
         onDismiss = onDismiss,
         onToggle = onToggle,
@@ -1856,6 +1866,9 @@ private fun PlayerSheetWithProgress(
         onSetSleepTimer = onSetSleepTimer,
         onCancelSleepTimer = onCancelSleepTimer,
         onSetSleepAfterCurrentTrack = onSetSleepAfterCurrentTrack,
+        onSetLoopStart = onSetLoopStart,
+        onSetLoopEnd = onSetLoopEnd,
+        onClearLoop = onClearLoop,
         onAddBookmark = onAddBookmark,
         onToggleFavorite = onToggleFavorite,
         onOpenQueue = onOpenQueue
@@ -1880,6 +1893,7 @@ private fun PlayerSheet(
     fadeTransitionsEnabled: Boolean,
     sleepTimerRemainingMs: Long,
     sleepAfterCurrentTrackEnabled: Boolean,
+    loopSegment: PlayerViewModel.LoopSegment,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1893,6 +1907,9 @@ private fun PlayerSheet(
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
     onSetSleepAfterCurrentTrack: (Boolean) -> Unit,
+    onSetLoopStart: () -> Unit,
+    onSetLoopEnd: () -> Unit,
+    onClearLoop: () -> Unit,
     onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
@@ -1904,6 +1921,7 @@ private fun PlayerSheet(
     var scrubProgress by remember { mutableFloatStateOf(progress) }
     val sliderProgress = if (isSeeking) scrubProgress else progress
     val playbackStrategy = playbackStrategyFor(repeatMode, shuffleEnabled)
+    val loopForCurrentTrack = loopSegment.takeIf { it.trackId == track.id }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -2027,6 +2045,32 @@ private fun PlayerSheet(
                         label = { Text("前进 15 秒") },
                         leadingIcon = { Icon(Icons.Default.Forward10, contentDescription = null, modifier = Modifier.size(18.dp)) }
                     )
+                }
+            }
+            if (durationMs > 0L) {
+                Spacer(Modifier.height(12.dp))
+                Text("A-B 片段循环", style = MaterialTheme.typography.titleSmall, modifier = Modifier.fillMaxWidth())
+            Text(
+                when {
+                    loopForCurrentTrack?.isActive == true -> "正在循环 ${formatTime(loopForCurrentTrack.startMs ?: 0L)} 至 ${formatTime(loopForCurrentTrack.endMs ?: 0L)}"
+                    loopForCurrentTrack?.startMs != null -> "起点 A：${formatTime(loopForCurrentTrack.startMs)}，移动进度后设置终点 B"
+                    else -> "适合反复听一句歌词、片段或访谈段落"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFFD6E1F6),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(onClick = onSetLoopStart, label = { Text("设为起点 A") })
+                AssistChip(
+                    onClick = onSetLoopEnd,
+                    enabled = loopForCurrentTrack?.startMs != null,
+                    label = { Text("设为终点 B") }
+                )
+                    if (loopForCurrentTrack?.isActive == true) {
+                        TextButton(onClick = onClearLoop) { Text("关闭") }
+                    }
                 }
             }
             if (program?.chapters?.isNotEmpty() == true) {

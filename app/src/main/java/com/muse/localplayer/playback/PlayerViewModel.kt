@@ -65,6 +65,14 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val index: Int
     )
 
+    data class LoopSegment(
+        val trackId: Long? = null,
+        val startMs: Long? = null,
+        val endMs: Long? = null
+    ) {
+        val isActive: Boolean get() = trackId != null && startMs != null && endMs != null && endMs > startMs
+    }
+
     data class FeaturedJourneyState(
         val completedTrackIds: Set<Long> = emptySet(),
         val resumeTrack: Track? = null,
@@ -147,6 +155,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _sleepAfterCurrentTrackId = MutableStateFlow<Long?>(null)
     val sleepAfterCurrentTrackId = _sleepAfterCurrentTrackId.asStateFlow()
 
+    private val _loopSegment = MutableStateFlow(LoopSegment())
+    val loopSegment = _loopSegment.asStateFlow()
+
     private val _mixingPlaybackEnabled = MutableStateFlow(false)
     val mixingPlaybackEnabled = _mixingPlaybackEnabled.asStateFlow()
 
@@ -177,6 +188,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var featuredJourneyResumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
     private var lastResumePersistenceAt = 0L
     private var lastFeaturedJourneyResumePersistenceAt = 0L
+    private var lastLoopSeekAt = 0L
     private var cachedFeaturedPack: FeaturedAudioPack? = null
     private var featuredProgramsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
     private var trackIndex: Map<Long, Track> = emptyMap()
@@ -235,6 +247,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     _playerMessage.value = PlayerFeedback("本曲已播放完，已按设置暂停。")
                 }
                 clearSleepAfterCurrentTrack()
+            }
+            val transitionedTrackId = mediaItem?.mediaId?.toLongOrNull()
+            if (_loopSegment.value.trackId != null && _loopSegment.value.trackId != transitionedTrackId) {
+                clearLoopSegment()
             }
             resetTimelineFor(mediaItem)
             syncCurrentTrack(mediaItem)
@@ -908,6 +924,34 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { preferencesRepository.saveSleepAfterCurrentTrackId(targetId) }
     }
 
+    fun setLoopStart() {
+        val trackId = _currentTrack.value?.id ?: return
+        val position = _positionMs.value.coerceAtLeast(0L)
+        _loopSegment.value = LoopSegment(trackId = trackId, startMs = position)
+        _playerMessage.value = PlayerFeedback("已设置循环起点 ${formatTimestamp(position)}。")
+    }
+
+    fun setLoopEnd() {
+        val loop = _loopSegment.value
+        val currentTrackId = _currentTrack.value?.id ?: return
+        val start = loop.startMs?.takeIf { loop.trackId == currentTrackId } ?: run {
+            _playerMessage.value = PlayerFeedback("请先设置循环起点。")
+            return
+        }
+        val end = _positionMs.value.coerceAtLeast(0L)
+        if (end - start < MIN_LOOP_SEGMENT_MS) {
+            _playerMessage.value = PlayerFeedback("循环片段至少需要 ${MIN_LOOP_SEGMENT_MS / 1_000L} 秒。")
+            return
+        }
+        _loopSegment.value = LoopSegment(trackId = currentTrackId, startMs = start, endMs = end)
+        _playerMessage.value = PlayerFeedback("正在循环 ${formatTimestamp(start)} 至 ${formatTimestamp(end)}。")
+    }
+
+    fun clearLoopSegment() {
+        _loopSegment.value = LoopSegment()
+        lastLoopSeekAt = 0L
+    }
+
     fun clearPlaybackHistory() {
         viewModelScope.launch { preferencesRepository.clearPlaybackHistory() }
     }
@@ -1341,10 +1385,36 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 0f
             }
             val currentTrack = _currentTrack.value
+            val activeLoop = _loopSegment.value.takeIf {
+                it.isActive && it.trackId == currentTrack?.id
+            }
+            val loopedPosition = activeLoop?.let { loop ->
+                val loopEnd = loop.endMs ?: return@let null
+                val loopStart = loop.startMs ?: return@let null
+                if (
+                    boundedPosition >= loopEnd &&
+                    android.os.SystemClock.elapsedRealtime() - lastLoopSeekAt >= LOOP_SEEK_GUARD_MS
+                ) {
+                    lastLoopSeekAt = android.os.SystemClock.elapsedRealtime()
+                    activeController.seekTo(loopStart)
+                    loopStart
+                } else {
+                    null
+                }
+            }
+            if (loopedPosition != null) {
+                _positionMs.value = loopedPosition
+                _playbackProgress.value = if (duration > 0L) {
+                    (loopedPosition.toDouble() / duration.toDouble()).toFloat().coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+            }
+            val effectivePosition = loopedPosition ?: boundedPosition
             if (
                 currentTrack?.isFeaturedAsset == true &&
                 duration > 0L &&
-                boundedPosition >= duration - FEATURED_COMPLETION_TOLERANCE_MS &&
+                effectivePosition >= duration - FEATURED_COMPLETION_TOLERANCE_MS &&
                 currentTrack.id !in completedFeaturedTrackIds
             ) {
                 // 在持久化前即时更新，避免进度轮询在 DataStore 发射前重复排队写入同一曲目。
@@ -1478,6 +1548,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val SLEEP_TIMER_TICK_MS = 1_000L
         const val MAX_SLEEP_TIMER_MINUTES = 180
         const val MIN_VALID_DURATION_MS = 1_000L
+        const val MIN_LOOP_SEGMENT_MS = 1_000L
+        const val LOOP_SEEK_GUARD_MS = 750L
         const val FEATURED_COMPLETION_TOLERANCE_MS = 2_000L
     }
 }
