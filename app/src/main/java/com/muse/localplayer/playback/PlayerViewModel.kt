@@ -66,6 +66,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     )
 
     data class FeaturedJourneyState(
+        val completedTrackIds: Set<Long> = emptySet(),
         val completedCount: Int = 0,
         val totalCount: Int = 0,
         val nextTrack: Track? = null,
@@ -945,6 +946,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val featured = _featuredTracks.value
         val completed = completedFeaturedTrackIds.intersect(featured.map(Track::id).toSet())
         _featuredJourney.value = FeaturedJourneyState(
+            completedTrackIds = completed,
             completedCount = completed.size,
             totalCount = featured.size,
             nextTrack = featured.firstOrNull { it.id !in completed },

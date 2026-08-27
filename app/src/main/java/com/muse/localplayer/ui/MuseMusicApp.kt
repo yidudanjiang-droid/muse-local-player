@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -766,7 +767,12 @@ internal fun HomeScreen(
         } else {
             item { SectionHeader("专题曲目", "全部播放", onPlayFeaturedTracks) }
             items(featuredTracks, key = { it.id }) { track ->
-                TrackListItem(track = track, onClick = { onPlay(track) }, onMore = { onMore(track) })
+                TrackListItem(
+                    track = track,
+                    isFeaturedCompleted = track.id in featuredJourney.completedTrackIds,
+                    onClick = { onPlay(track) },
+                    onMore = { onMore(track) }
+                )
             }
         }
         item {
@@ -1542,13 +1548,27 @@ private fun SectionHeader(title: String, action: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TrackListItem(track: Track, onClick: () -> Unit, onMore: () -> Unit) {
+private fun TrackListItem(
+    track: Track,
+    isFeaturedCompleted: Boolean = false,
+    onClick: () -> Unit,
+    onMore: () -> Unit
+) {
+    val completedFeaturedTrack = track.isFeaturedAsset && isFeaturedCompleted
     ListItem(
         overlineContent = {
             Text(
-                if (track.isFeaturedAsset) "专题音频包" else "设备音乐",
+                when {
+                    completedFeaturedTrack -> "专题音频包 · 已完成"
+                    track.isFeaturedAsset -> "专题音频包"
+                    else -> "设备音乐"
+                },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (track.isFeaturedAsset) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                color = when {
+                    completedFeaturedTrack -> MaterialTheme.colorScheme.tertiary
+                    track.isFeaturedAsset -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
         },
         headlineContent = { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -1556,6 +1576,15 @@ private fun TrackListItem(track: Track, onClick: () -> Unit, onMore: () -> Unit)
         leadingContent = { AlbumArt(Modifier.size(52.dp), track.artworkUri, track.title, ArtEmphasis.Secondary) },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (completedFeaturedTrack) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = "已完成专题曲目",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
                 Text(
                     if (track.durationMs > 0L) track.durationLabel else "—:—",
                     style = MaterialTheme.typography.labelMedium,
