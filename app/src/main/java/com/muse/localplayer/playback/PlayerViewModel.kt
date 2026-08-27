@@ -67,6 +67,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     data class FeaturedJourneyState(
         val completedTrackIds: Set<Long> = emptySet(),
+        val resumeTrack: Track? = null,
+        val resumePositionMs: Long = 0L,
         val completedCount: Int = 0,
         val totalCount: Int = 0,
         val nextTrack: Track? = null,
@@ -169,7 +171,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var pendingTrack: Track? = null
     private var restoredQueueIds: List<Long> = emptyList()
     private var resumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
+    private var featuredJourneyResumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
     private var lastResumePersistenceAt = 0L
+    private var lastFeaturedJourneyResumePersistenceAt = 0L
     private var cachedFeaturedPack: FeaturedAudioPack? = null
     private var featuredProgramsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
     private var trackIndex: Map<Long, Track> = emptyMap()
@@ -352,6 +356,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             preferencesRepository.featuredCompletedTrackIds.collect { completedIds ->
                 completedFeaturedTrackIds = completedIds
+                refreshFeaturedJourney()
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.featuredJourneyResumeState.collect { savedResumeState ->
+                featuredJourneyResumeState = savedResumeState
                 refreshFeaturedJourney()
             }
         }
@@ -539,7 +549,19 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun continueFeaturedJourney() {
         val featuredQueue = _featuredTracks.value
-        val nextTrack = _featuredJourney.value.nextTrack ?: featuredQueue.firstOrNull() ?: return
+        val journey = _featuredJourney.value
+        val resumeTrack = journey.resumeTrack
+        if (resumeTrack != null) {
+            // 先固定完整专题队列，再复用按时间点播放路径，确保断点恢复不会退化为单曲播放。
+            setQueue(featuredQueue, resumeTrack, shouldPlay = false)
+            playTrackAtPosition(
+                track = resumeTrack,
+                positionMs = journey.resumePositionMs,
+                feedback = "已从 ${formatTimestamp(journey.resumePositionMs)} 继续《${resumeTrack.title}》的专题旅程。"
+            )
+            return
+        }
+        val nextTrack = journey.nextTrack ?: featuredQueue.firstOrNull() ?: return
         setQueue(featuredQueue, nextTrack, shouldPlay = true)
     }
 
@@ -548,8 +570,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (featuredQueue.isEmpty()) return
         // 先刷新内存状态，避免首页在 DataStore 流回写前短暂保留“已完成”。
         completedFeaturedTrackIds = emptySet()
+        featuredJourneyResumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
         refreshFeaturedJourney()
-        viewModelScope.launch { preferencesRepository.clearFeaturedJourneyProgress() }
+        viewModelScope.launch {
+            preferencesRepository.clearFeaturedJourneyProgress()
+            preferencesRepository.saveFeaturedJourneyResumeState(trackId = null, positionMs = 0L)
+        }
         setQueue(featuredQueue, featuredQueue.first(), shouldPlay = true)
     }
 
@@ -945,11 +971,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private fun refreshFeaturedJourney() {
         val featured = _featuredTracks.value
         val completed = completedFeaturedTrackIds.intersect(featured.map(Track::id).toSet())
+        val nextTrack = featured.firstOrNull { it.id !in completed }
+        val savedResumeTrack = featuredJourneyResumeState.trackId
+            ?.takeIf { it !in completed }
+            ?.let { trackId -> featured.firstOrNull { it.id == trackId } }
+            ?.takeIf { it.id == nextTrack?.id }
+            ?.takeIf { featuredJourneyResumeState.positionMs >= FEATURED_JOURNEY_RESUME_MIN_POSITION_MS }
+            ?.takeIf { track ->
+                track.durationMs <= 0L || featuredJourneyResumeState.positionMs < track.durationMs - RESUME_END_TOLERANCE_MS
+            }
         _featuredJourney.value = FeaturedJourneyState(
             completedTrackIds = completed,
+            resumeTrack = savedResumeTrack,
+            resumePositionMs = savedResumeTrack?.let { featuredJourneyResumeState.positionMs } ?: 0L,
             completedCount = completed.size,
             totalCount = featured.size,
-            nextTrack = featured.firstOrNull { it.id !in completed },
+            nextTrack = nextTrack,
             isComplete = featured.isNotEmpty() && completed.size == featured.size
         )
     }
@@ -1330,6 +1367,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
         resumeState = PlaybackResumeState(trackId, position)
         viewModelScope.launch { preferencesRepository.savePlaybackResumeState(trackId, position) }
+        persistFeaturedJourneyResumeState(trackId, position, force)
+    }
+
+    private fun persistFeaturedJourneyResumeState(trackId: Long, positionMs: Long, force: Boolean) {
+        val track = trackIndex[trackId] ?: return
+        if (!track.isFeaturedAsset) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (!force && now - lastFeaturedJourneyResumePersistenceAt < RESUME_PERSIST_INTERVAL_MS) return
+        lastFeaturedJourneyResumePersistenceAt = now
+        val isEligible = trackId !in completedFeaturedTrackIds && positionMs >= FEATURED_JOURNEY_RESUME_MIN_POSITION_MS
+        featuredJourneyResumeState = if (isEligible) {
+            PlaybackResumeState(trackId, positionMs)
+        } else {
+            PlaybackResumeState(trackId = null, positionMs = 0L)
+        }
+        refreshFeaturedJourney()
+        viewModelScope.launch {
+            preferencesRepository.saveFeaturedJourneyResumeState(
+                trackId = featuredJourneyResumeState.trackId,
+                positionMs = featuredJourneyResumeState.positionMs
+            )
+        }
     }
 
     override fun onCleared() {
@@ -1369,6 +1428,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private companion object {
         const val RESUME_PERSIST_INTERVAL_MS = 10_000L
+        const val FEATURED_JOURNEY_RESUME_MIN_POSITION_MS = 10_000L
         const val RESUME_END_TOLERANCE_MS = 2_000L
         const val PREVIOUS_RESTART_THRESHOLD_MS = 5_000L
         const val PROGRESS_UPDATE_INTERVAL_MS = 500L

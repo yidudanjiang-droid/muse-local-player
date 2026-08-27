@@ -83,6 +83,13 @@ class UserPreferencesRepository(private val context: Context) {
             .toSet()
     }
 
+    val featuredJourneyResumeState: Flow<PlaybackResumeState> = preferences.map { preferences ->
+        PlaybackResumeState(
+            trackId = preferences[KEY_FEATURED_JOURNEY_RESUME_TRACK_ID],
+            positionMs = preferences[KEY_FEATURED_JOURNEY_RESUME_POSITION_MS] ?: 0L
+        )
+    }
+
     val sleepTimerEndEpochMs: Flow<Long> = preferences.map { preferences ->
         preferences[KEY_SLEEP_TIMER_END_EPOCH_MS] ?: 0L
     }
@@ -178,6 +185,18 @@ class UserPreferencesRepository(private val context: Context) {
         context.musePreferences.edit { preferences -> preferences.remove(KEY_FEATURED_COMPLETED_TRACK_IDS) }
     }
 
+    suspend fun saveFeaturedJourneyResumeState(trackId: Long?, positionMs: Long) {
+        context.musePreferences.edit { preferences ->
+            if (trackId == null) {
+                preferences.remove(KEY_FEATURED_JOURNEY_RESUME_TRACK_ID)
+                preferences.remove(KEY_FEATURED_JOURNEY_RESUME_POSITION_MS)
+            } else {
+                preferences[KEY_FEATURED_JOURNEY_RESUME_TRACK_ID] = trackId
+                preferences[KEY_FEATURED_JOURNEY_RESUME_POSITION_MS] = positionMs.coerceAtLeast(0L)
+            }
+        }
+    }
+
     suspend fun saveSleepTimerEndEpochMs(endEpochMs: Long) {
         context.musePreferences.edit { preferences ->
             if (endEpochMs > 0L) preferences[KEY_SLEEP_TIMER_END_EPOCH_MS] = endEpochMs
@@ -251,6 +270,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val KEY_FADE_TRANSITIONS = booleanPreferencesKey("fade_transitions_enabled")
         private val KEY_PLAYBACK_HISTORY = stringPreferencesKey("playback_history")
         private val KEY_FEATURED_COMPLETED_TRACK_IDS = stringSetPreferencesKey("featured_completed_track_ids")
+        private val KEY_FEATURED_JOURNEY_RESUME_TRACK_ID = longPreferencesKey("featured_journey_resume_track_id")
+        private val KEY_FEATURED_JOURNEY_RESUME_POSITION_MS = longPreferencesKey("featured_journey_resume_position_ms")
         private val KEY_SLEEP_TIMER_END_EPOCH_MS = longPreferencesKey("sleep_timer_end_epoch_ms")
         private val KEY_RESUME_TRACK_ID = longPreferencesKey("resume_track_id")
         private val KEY_RESUME_POSITION_MS = longPreferencesKey("resume_position_ms")

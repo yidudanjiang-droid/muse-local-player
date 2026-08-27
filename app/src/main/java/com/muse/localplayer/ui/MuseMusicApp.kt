@@ -971,9 +971,14 @@ private fun FeaturedJourneyCard(
                     Text("重新开始")
                 }
             } else {
+                val resumeTrack = journey.resumeTrack
                 val nextTrack = journey.nextTrack
                 Text(
-                    nextTrack?.let { "下一步 · ${it.title} · ${it.artist}" } ?: "从头播放即可开始本期旅程。",
+                    when {
+                        resumeTrack != null -> "断点继续 · ${resumeTrack.title} · ${formatTime(journey.resumePositionMs)}"
+                        nextTrack != null -> "下一步 · ${nextTrack.title} · ${nextTrack.artist}"
+                        else -> "从头播放即可开始本期旅程。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f),
                     maxLines = 1,
@@ -983,7 +988,13 @@ private fun FeaturedJourneyCard(
                 FilledTonalButton(onClick = onContinue) {
                     Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(if (journey.completedCount == 0) "开始旅程" else "继续旅程")
+                    Text(
+                        when {
+                            resumeTrack != null -> "从 ${formatTime(journey.resumePositionMs)} 继续"
+                            journey.completedCount == 0 -> "开始旅程"
+                            else -> "继续旅程"
+                        }
+                    )
                 }
             }
         }
