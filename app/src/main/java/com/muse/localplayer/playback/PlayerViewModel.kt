@@ -25,6 +25,7 @@ import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedAudioPack
 import com.muse.localplayer.data.FeaturedAudioRepository
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedTopicProgress
 import com.muse.localplayer.data.FeaturedTrackProgram
 import com.muse.localplayer.data.TrackSource
 import com.muse.localplayer.data.LibraryLoadResult
@@ -92,8 +93,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _tracks = MutableStateFlow<List<Track>>(emptyList())
     val tracks = _tracks.asStateFlow()
 
+    /** Tracks from the topic currently selected for browsing. */
     private val _featuredTracks = MutableStateFlow<List<Track>>(emptyList())
     val featuredTracks = _featuredTracks.asStateFlow()
+
+    /** Every independently configured offline topic found in the APK. */
+    private val _featuredTopics = MutableStateFlow<List<FeaturedAudioPack>>(emptyList())
+    val featuredTopics = _featuredTopics.asStateFlow()
+
+    private val _activeFeaturedTopicId = MutableStateFlow<String?>(null)
+    val activeFeaturedTopicId = _activeFeaturedTopicId.asStateFlow()
+
+    /** Cached progress for every known topic; UI uses this to render the topic shelf honestly. */
+    private val _featuredTopicProgresses = MutableStateFlow<Map<String, FeaturedTopicProgress>>(emptyMap())
+    val featuredTopicProgresses = _featuredTopicProgresses.asStateFlow()
 
     private val _featuredJourney = MutableStateFlow(FeaturedJourneyState())
     val featuredJourney = _featuredJourney.asStateFlow()
@@ -193,8 +206,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastResumePersistenceAt = 0L
     private var lastFeaturedJourneyResumePersistenceAt = 0L
     private var lastLoopSeekAt = 0L
-    private var cachedFeaturedPack: FeaturedAudioPack? = null
+    private var cachedFeaturedCatalog: List<FeaturedAudioPack>? = null
+    private val featuredTopicProgressJobs = mutableMapOf<String, Job>()
+    private var allFeaturedTracks: List<Track> = emptyList()
+    private var featuredTopicsById: Map<String, FeaturedAudioPack> = emptyMap()
     private var featuredProgramsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
+    private var preferredActiveFeaturedTopicId: String? = null
     private var trackIndex: Map<Long, Track> = emptyMap()
     private var tracksBySource: Map<TrackSource, List<Track>> = emptyMap()
     private var timelineTrackId: String? = null
@@ -393,15 +410,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
-            preferencesRepository.featuredCompletedTrackIds.collect { completedIds ->
-                completedFeaturedTrackIds = completedIds
-                refreshFeaturedJourney()
-            }
-        }
-        viewModelScope.launch {
-            preferencesRepository.featuredJourneyResumeState.collect { savedResumeState ->
-                featuredJourneyResumeState = savedResumeState
-                refreshFeaturedJourney()
+            preferencesRepository.activeFeaturedTopicId.collect { preferredTopicId ->
+                preferredActiveFeaturedTopicId = preferredTopicId
+                val activeTopic = featuredTopicsById[preferredTopicId]
+                if (activeTopic != null) applyActiveFeaturedTopic(activeTopic, persistSelection = false)
             }
         }
         viewModelScope.launch {
@@ -430,13 +442,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (libraryScanJob?.isActive == true) return
         libraryScanJob = viewModelScope.launch {
             _libraryUiState.value = LibraryUiState.Loading
-            val featuredPack = loadFeaturedPackIfNeeded()
-            val featured = featuredPack.tracks
-            featuredProgramsByTrackId = featuredPack.programsByTrackId
-            _featuredPrograms.value = featuredPack.programsByTrackId
-            _featuredTracks.value = featured
-            refreshFeaturedJourney()
-            _featuredPackMetadata.value = featuredPack.metadata
+            val featuredTopics = loadFeaturedCatalogIfNeeded()
+            applyFeaturedCatalog(featuredTopics)
+            val featured = allFeaturedTracks
             when (val result = musicRepository.loadTracks()) {
                 is LibraryLoadResult.Success -> {
                     updateTracks(featured, result.tracks)
@@ -466,11 +474,66 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun loadFeaturedPackIfNeeded(): FeaturedAudioPack {
-        cachedFeaturedPack?.let { return it }
-        return runCatching { featuredAudioRepository.loadPack() }
-            .getOrElse { FeaturedAudioPack() }
-            .also { cachedFeaturedPack = it }
+    private suspend fun loadFeaturedCatalogIfNeeded(): List<FeaturedAudioPack> {
+        cachedFeaturedCatalog?.let { return it }
+        return runCatching { featuredAudioRepository.loadCatalog().topics }
+            .getOrDefault(emptyList())
+            .also { cachedFeaturedCatalog = it }
+    }
+
+    private fun applyFeaturedCatalog(topics: List<FeaturedAudioPack>) {
+        featuredTopicProgressJobs.values.forEach(Job::cancel)
+        featuredTopicProgressJobs.clear()
+        _featuredTopics.value = topics
+        featuredTopicsById = topics.associateBy(FeaturedAudioPack::id)
+        allFeaturedTracks = topics.flatMap(FeaturedAudioPack::tracks)
+        featuredProgramsByTrackId = topics.flatMap { it.programsByTrackId.entries }.associate { it.toPair() }
+        topics.forEach { topic ->
+            featuredTopicProgressJobs[topic.id] = viewModelScope.launch {
+                preferencesRepository.featuredTopicProgress(topic.id).collect { progress ->
+                    _featuredTopicProgresses.value = _featuredTopicProgresses.value + (topic.id to progress)
+                    if (_activeFeaturedTopicId.value == topic.id) {
+                        applyActiveFeaturedTopicProgress(progress)
+                    }
+                }
+            }
+        }
+        val selectedId = preferredActiveFeaturedTopicId
+            ?.takeIf(featuredTopicsById::containsKey)
+            ?: _activeFeaturedTopicId.value?.takeIf(featuredTopicsById::containsKey)
+            ?: topics.firstOrNull()?.id
+        selectedId?.let(featuredTopicsById::get)?.let { applyActiveFeaturedTopic(it, persistSelection = false) }
+        if (selectedId == null) {
+            _activeFeaturedTopicId.value = null
+            _featuredTracks.value = emptyList()
+            _featuredPrograms.value = emptyMap()
+            _featuredPackMetadata.value = FeaturedPackMetadata()
+            completedFeaturedTrackIds = emptySet()
+            featuredJourneyResumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
+            refreshFeaturedJourney()
+        }
+    }
+
+    fun selectFeaturedTopic(topicId: String) {
+        val topic = featuredTopicsById[topicId] ?: return
+        applyActiveFeaturedTopic(topic, persistSelection = true)
+    }
+
+    private fun applyActiveFeaturedTopic(topic: FeaturedAudioPack, persistSelection: Boolean) {
+        _activeFeaturedTopicId.value = topic.id
+        _featuredTracks.value = topic.tracks
+        _featuredPrograms.value = topic.programsByTrackId
+        _featuredPackMetadata.value = topic.metadata
+        applyActiveFeaturedTopicProgress(_featuredTopicProgresses.value[topic.id] ?: FeaturedTopicProgress())
+        if (persistSelection) {
+            viewModelScope.launch { preferencesRepository.saveActiveFeaturedTopicId(topic.id) }
+        }
+    }
+
+    private fun applyActiveFeaturedTopicProgress(progress: FeaturedTopicProgress) {
+        completedFeaturedTrackIds = progress.completedTrackIds
+        featuredJourneyResumeState = progress.resumeState
+        refreshFeaturedJourney()
     }
 
     private fun updateTracks(featured: List<Track>, deviceTracks: List<Track>) {
@@ -562,15 +625,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun play(track: Track) {
+        track.featuredTopicId?.let { topicId ->
+            if (_activeFeaturedTopicId.value != topicId) selectFeaturedTopic(topicId)
+        }
         // 用户主动点按可重试此前失败的文件；若仍失败则继续沿用自动跳过保护。
         failedTrackIds.remove(track.id)
         val activeController = controller ?: run {
             pendingTrack = track
             return
         }
-        val queueToPlay = _queue.value.ifEmpty {
-            tracksBySource[track.source].orEmpty()
-        }
+        val queueToPlay = _queue.value.ifEmpty { queueForTrack(track) }
         if (queueToPlay.none { it.id == track.id }) {
             setQueue(queueToPlay + track, track, shouldPlay = true)
             return
@@ -585,7 +649,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _isPlaying.value = true
     }
 
-    /** Starts the packaged featured collection in its repository order, independent of any previous queue. */
+    private fun queueForTrack(track: Track): List<Track> = when {
+        track.isFeaturedAsset -> featuredTopicsById[track.featuredTopicId]?.tracks.orEmpty().ifEmpty { listOf(track) }
+        else -> tracksBySource[track.source].orEmpty()
+    }
+
+    /** Starts the selected packaged topic in its repository order, independent of any previous queue. */
     fun playFeaturedTracks() {
         val featuredQueue = _featuredTracks.value
         if (featuredQueue.isEmpty()) return
@@ -597,7 +666,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
      * This keeps next/previous, completion progress and resume behavior scoped to the APK topic.
      */
     fun playFeaturedTrackAt(track: Track, positionMs: Long = 0L) {
-        val featuredQueue = _featuredTracks.value
+        track.featuredTopicId?.let { topicId ->
+            if (_activeFeaturedTopicId.value != topicId) selectFeaturedTopic(topicId)
+        }
+        val featuredQueue = featuredTopicsById[track.featuredTopicId]?.tracks.orEmpty()
         if (featuredQueue.none { it.id == track.id }) {
             play(track)
             return
@@ -637,9 +709,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         completedFeaturedTrackIds = emptySet()
         featuredJourneyResumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
         refreshFeaturedJourney()
+        val activeTopicId = _activeFeaturedTopicId.value ?: return
+        _featuredTopicProgresses.value = _featuredTopicProgresses.value + (
+            activeTopicId to FeaturedTopicProgress()
+        )
         viewModelScope.launch {
-            preferencesRepository.clearFeaturedJourneyProgress()
-            preferencesRepository.saveFeaturedJourneyResumeState(trackId = null, positionMs = 0L)
+            preferencesRepository.clearFeaturedTopicJourneyProgress(activeTopicId)
         }
         setQueue(featuredQueue, featuredQueue.first(), shouldPlay = true)
     }
@@ -1023,7 +1098,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             )
             return
         }
-        val queueToPlay = _queue.value.ifEmpty { tracksBySource[track.source].orEmpty() }
+        val queueToPlay = _queue.value.ifEmpty { queueForTrack(track) }
         val targetQueue = if (queueToPlay.any { it.id == track.id }) queueToPlay else queueToPlay + track
         val targetIndex = targetQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         if (activeController.currentMediaItem?.mediaId == track.id.toString()) {
@@ -1443,9 +1518,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 currentTrack.id !in completedFeaturedTrackIds
             ) {
                 // 在持久化前即时更新，避免进度轮询在 DataStore 发射前重复排队写入同一曲目。
+                val topicId = currentTrack.featuredTopicId ?: return
                 completedFeaturedTrackIds = completedFeaturedTrackIds + currentTrack.id
+                _featuredTopicProgresses.value = _featuredTopicProgresses.value + (
+                    topicId to FeaturedTopicProgress(
+                        completedTrackIds = completedFeaturedTrackIds,
+                        resumeState = featuredJourneyResumeState
+                    )
+                )
                 refreshFeaturedJourney()
-                viewModelScope.launch { preferencesRepository.markFeaturedTrackCompleted(currentTrack.id) }
+                viewModelScope.launch { preferencesRepository.markFeaturedTopicTrackCompleted(topicId, currentTrack.id) }
             }
             persistResumeState(forcePersist)
         }
@@ -1460,6 +1542,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val updated = current.copy(durationMs = durationMs)
         trackIndex = trackIndex + (trackId to updated)
         _tracks.value = _tracks.value.map { if (it.id == trackId) updated else it }
+        allFeaturedTracks = allFeaturedTracks.map { if (it.id == trackId) updated else it }
+        _featuredTopics.value = _featuredTopics.value.map { topic ->
+            if (topic.tracks.none { it.id == trackId }) topic
+            else topic.copy(tracks = topic.tracks.map { if (it.id == trackId) updated else it })
+        }
+        featuredTopicsById = _featuredTopics.value.associateBy(FeaturedAudioPack::id)
         _featuredTracks.value = _featuredTracks.value.map { if (it.id == trackId) updated else it }
         _queue.value = _queue.value.map { if (it.id == trackId) updated else it }
         if (_currentTrack.value?.id == trackId) _currentTrack.value = updated
@@ -1514,8 +1602,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             PlaybackResumeState(trackId = null, positionMs = 0L)
         }
         refreshFeaturedJourney()
+        val topicId = track.featuredTopicId ?: return
+        _featuredTopicProgresses.value = _featuredTopicProgresses.value + (
+            topicId to FeaturedTopicProgress(
+                completedTrackIds = completedFeaturedTrackIds,
+                resumeState = featuredJourneyResumeState
+            )
+        )
         viewModelScope.launch {
-            preferencesRepository.saveFeaturedJourneyResumeState(
+            preferencesRepository.saveFeaturedTopicJourneyResumeState(
+                topicId = topicId,
                 trackId = featuredJourneyResumeState.trackId,
                 positionMs = featuredJourneyResumeState.positionMs
             )

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -138,6 +139,8 @@ import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedTopicProgress
+import com.muse.localplayer.data.FeaturedAudioPack
 import com.muse.localplayer.data.FeaturedChapter
 import com.muse.localplayer.data.ChapterPlaybackState
 import com.muse.localplayer.data.chapterPlaybackState
@@ -164,6 +167,9 @@ fun MuseMusicApp(
 ) {
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
     val featuredTracks by viewModel.featuredTracks.collectAsStateWithLifecycle()
+    val featuredTopics by viewModel.featuredTopics.collectAsStateWithLifecycle()
+    val activeFeaturedTopicId by viewModel.activeFeaturedTopicId.collectAsStateWithLifecycle()
+    val featuredTopicProgresses by viewModel.featuredTopicProgresses.collectAsStateWithLifecycle()
     val featuredJourney by viewModel.featuredJourney.collectAsStateWithLifecycle()
     val featuredPackMetadata by viewModel.featuredPackMetadata.collectAsStateWithLifecycle()
     val featuredPrograms by viewModel.featuredPrograms.collectAsStateWithLifecycle()
@@ -385,6 +391,9 @@ fun MuseMusicApp(
                     selectedTab = selectedTab,
                     tracks = tracks,
                     featuredTracks = featuredTracks,
+                    featuredTopics = featuredTopics,
+                    activeFeaturedTopicId = activeFeaturedTopicId,
+                    featuredTopicProgresses = featuredTopicProgresses,
                     featuredJourney = featuredJourney,
                     featuredMetadata = featuredPackMetadata,
                     visibleTracks = filteredTracks,
@@ -412,6 +421,7 @@ fun MuseMusicApp(
                     onContinueFeaturedJourney = viewModel::continueFeaturedJourney,
                     onRestartFeaturedJourney = viewModel::restartFeaturedJourney,
                     onPlayFeaturedTracks = viewModel::playFeaturedTracks,
+                    onSelectFeaturedTopic = viewModel::selectFeaturedTopic,
                     onAddTracksToQueue = { tracksToAdd ->
                         val addedCount = viewModel.addTracksToQueue(tracksToAdd)
                         scope.launch {
@@ -442,6 +452,9 @@ fun MuseMusicApp(
                             selectedTab = selectedTab,
                             tracks = tracks,
                             featuredTracks = featuredTracks,
+                            featuredTopics = featuredTopics,
+                            activeFeaturedTopicId = activeFeaturedTopicId,
+                            featuredTopicProgresses = featuredTopicProgresses,
                             featuredJourney = featuredJourney,
                             featuredMetadata = featuredPackMetadata,
                             visibleTracks = filteredTracks,
@@ -469,6 +482,7 @@ fun MuseMusicApp(
                             onContinueFeaturedJourney = viewModel::continueFeaturedJourney,
                             onRestartFeaturedJourney = viewModel::restartFeaturedJourney,
                             onPlayFeaturedTracks = viewModel::playFeaturedTracks,
+                            onSelectFeaturedTopic = viewModel::selectFeaturedTopic,
                             onAddTracksToQueue = { tracksToAdd ->
                                 val addedCount = viewModel.addTracksToQueue(tracksToAdd)
                                 scope.launch {
@@ -632,10 +646,14 @@ fun MuseMusicApp(
         FeaturedTopicSheet(
             metadata = featuredPackMetadata,
             tracks = featuredTracks,
+            topics = featuredTopics,
+            activeTopicId = activeFeaturedTopicId,
+            progressByTopicId = featuredTopicProgresses,
             programsByTrackId = featuredPrograms,
             journey = featuredJourney,
             currentFeaturedTrackId = currentTrack?.takeIf(Track::isFeaturedAsset)?.id,
             onDismiss = { featuredDetailOpen = false },
+            onSelectTopic = viewModel::selectFeaturedTopic,
             onPlayAll = {
                 viewModel.playFeaturedTracks()
                 featuredDetailOpen = false
@@ -724,6 +742,9 @@ private fun NavigationDrawerHeader() {
 @Composable
 internal fun HomeScreen(
     featuredTracks: List<Track>,
+    featuredTopics: List<FeaturedAudioPack>,
+    activeFeaturedTopicId: String?,
+    featuredTopicProgresses: Map<String, FeaturedTopicProgress>,
     featuredJourney: PlayerViewModel.FeaturedJourneyState,
     featuredMetadata: FeaturedPackMetadata,
     libraryUiState: LibraryUiState,
@@ -746,6 +767,7 @@ internal fun HomeScreen(
     onContinueFeaturedJourney: () -> Unit,
     onRestartFeaturedJourney: () -> Unit,
     onPlayFeaturedTracks: () -> Unit,
+    onSelectFeaturedTopic: (String) -> Unit,
     onAddFeaturedTracksToQueue: () -> Unit,
     onSongsClick: () -> Unit,
     onMore: (Track) -> Unit,
@@ -771,6 +793,16 @@ internal fun HomeScreen(
                     featuredMetadata.description,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (featuredTopics.size > 1) {
+            item {
+                FeaturedTopicShelf(
+                    topics = featuredTopics,
+                    selectedTopicId = activeFeaturedTopicId,
+                    progressByTopicId = featuredTopicProgresses,
+                    onSelect = onSelectFeaturedTopic
                 )
             }
         }
@@ -890,6 +922,79 @@ private fun BookmarkListItem(
                 )
             }
             TextButton(onClick = onRemove) { Text("移除") }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedTopicShelf(
+    topics: List<FeaturedAudioPack>,
+    selectedTopicId: String?,
+    progressByTopicId: Map<String, FeaturedTopicProgress>,
+    onSelect: (String) -> Unit
+) {
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("专题目录", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Text("${topics.size} 期", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "每一期拥有独立的曲目、节目单和收听进度。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(topics, key = FeaturedAudioPack::id) { topic ->
+                val completed = progressByTopicId[topic.id]?.completedTrackIds.orEmpty()
+                    .intersect(topic.tracks.map(Track::id).toSet())
+                    .size
+                val selected = topic.id == selectedTopicId
+                Card(
+                    onClick = { onSelect(topic.id) },
+                    modifier = Modifier.width(224.dp).height(148.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        AsyncImage(
+                            model = topic.tracks.firstOrNull()?.artworkUri ?: R.drawable.muse_featured_hero,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize().alpha(if (selected) 0.9f else 0.58f),
+                            contentScale = ContentScale.Crop
+                        )
+                        Box(modifier = Modifier.fillMaxSize().background(Color(0x6609122D)))
+                        Column(
+                            modifier = Modifier.fillMaxSize().padding(16.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = Color.White.copy(alpha = 0.18f)
+                            ) {
+                                Text(
+                                    if (selected) "当前浏览" else topic.metadata.eyebrow,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White
+                                )
+                            }
+                            Column {
+                                Text(topic.metadata.title, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    "${topic.tracks.size} 首 · 已完成 $completed/${topic.tracks.size}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.White.copy(alpha = 0.88f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1128,10 +1233,14 @@ private fun FeaturedJourneyCard(
 private fun FeaturedTopicSheet(
     metadata: FeaturedPackMetadata,
     tracks: List<Track>,
+    topics: List<FeaturedAudioPack>,
+    activeTopicId: String?,
+    progressByTopicId: Map<String, FeaturedTopicProgress>,
     programsByTrackId: Map<Long, FeaturedTrackProgram>,
     journey: PlayerViewModel.FeaturedJourneyState,
     currentFeaturedTrackId: Long?,
     onDismiss: () -> Unit,
+    onSelectTopic: (String) -> Unit,
     onPlayAll: () -> Unit,
     onContinue: () -> Unit,
     onRestart: () -> Unit,
@@ -1194,6 +1303,16 @@ private fun FeaturedTopicSheet(
                     }
                     Spacer(Modifier.height(10.dp))
                     Text(metadata.description, style = MaterialTheme.typography.bodyLarge, color = Color(0xFFD6E1F6))
+                }
+                if (topics.size > 1) {
+                    item {
+                        FeaturedTopicQuickSwitch(
+                            topics = topics,
+                            selectedTopicId = activeTopicId,
+                            progressByTopicId = progressByTopicId,
+                            onSelect = onSelectTopic
+                        )
+                    }
                 }
                 item {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1294,6 +1413,44 @@ private fun FeaturedTopicSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedTopicQuickSwitch(
+    topics: List<FeaturedAudioPack>,
+    selectedTopicId: String?,
+    progressByTopicId: Map<String, FeaturedTopicProgress>,
+    onSelect: (String) -> Unit
+) {
+    Column {
+        Text("切换专题", style = MaterialTheme.typography.labelLarge, color = Color(0xFFC6D8FF))
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(topics, key = FeaturedAudioPack::id) { topic ->
+                val completed = progressByTopicId[topic.id]?.completedTrackIds.orEmpty()
+                    .intersect(topic.tracks.map(Track::id).toSet())
+                    .size
+                AssistChip(
+                    onClick = { onSelect(topic.id) },
+                    label = {
+                        Text(
+                            "${topic.metadata.title} · $completed/${topic.tracks.size}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    leadingIcon = if (topic.id == selectedTopicId) {
+                        { Icon(Icons.Default.CheckCircle, contentDescription = "当前专题", modifier = Modifier.size(16.dp)) }
+                    } else null,
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (topic.id == selectedTopicId) Color(0xFF38568F) else Color.White.copy(alpha = 0.12f),
+                        labelColor = Color.White,
+                        leadingIconContentColor = Color(0xFFC6D8FF)
+                    )
+                )
             }
         }
     }

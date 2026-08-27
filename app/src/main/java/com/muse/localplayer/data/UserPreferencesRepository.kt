@@ -2,6 +2,7 @@ package com.muse.localplayer.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.edit
@@ -27,6 +28,11 @@ data class PlaybackBookmark(
     val trackId: Long,
     val positionMs: Long,
     val savedAtEpochMs: Long
+)
+
+data class FeaturedTopicProgress(
+    val completedTrackIds: Set<Long> = emptySet(),
+    val resumeState: PlaybackResumeState = PlaybackResumeState(trackId = null, positionMs = 0L)
 )
 
 class UserPreferencesRepository(private val context: Context) {
@@ -88,6 +94,42 @@ class UserPreferencesRepository(private val context: Context) {
             trackId = preferences[KEY_FEATURED_JOURNEY_RESUME_TRACK_ID],
             positionMs = preferences[KEY_FEATURED_JOURNEY_RESUME_POSITION_MS] ?: 0L
         )
+    }
+
+    val activeFeaturedTopicId: Flow<String?> = preferences.map { preferences ->
+        preferences[KEY_ACTIVE_FEATURED_TOPIC_ID]?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Per-topic progress state. The legacy single-topic value remains a read fallback for the
+     * default topic until that topic receives its first v1.9 write.
+     */
+    fun featuredTopicProgress(topicId: String): Flow<FeaturedTopicProgress> {
+        val normalizedId = normalizeTopicId(topicId)
+        val completedKey = featuredTopicCompletedKey(normalizedId)
+        val resumeTrackKey = featuredTopicResumeTrackKey(normalizedId)
+        val resumePositionKey = featuredTopicResumePositionKey(normalizedId)
+        return preferences.map { preferences ->
+            val initialized = normalizedId in preferences[KEY_INITIALIZED_FEATURED_TOPIC_IDS].orEmpty()
+            val useLegacy = !initialized && normalizedId == DEFAULT_FEATURED_TOPIC_ID
+            val completed = if (useLegacy) {
+                preferences[KEY_FEATURED_COMPLETED_TRACK_IDS].orEmpty()
+            } else {
+                preferences[completedKey].orEmpty()
+            }.mapNotNull { it.toLongOrNull() }.toSet()
+            val resumeState = if (useLegacy) {
+                PlaybackResumeState(
+                    trackId = preferences[KEY_FEATURED_JOURNEY_RESUME_TRACK_ID],
+                    positionMs = preferences[KEY_FEATURED_JOURNEY_RESUME_POSITION_MS] ?: 0L
+                )
+            } else {
+                PlaybackResumeState(
+                    trackId = preferences[resumeTrackKey],
+                    positionMs = preferences[resumePositionKey] ?: 0L
+                )
+            }
+            FeaturedTopicProgress(completedTrackIds = completed, resumeState = resumeState)
+        }
     }
 
     val sleepTimerEndEpochMs: Flow<Long> = preferences.map { preferences ->
@@ -189,6 +231,47 @@ class UserPreferencesRepository(private val context: Context) {
         context.musePreferences.edit { preferences -> preferences.remove(KEY_FEATURED_COMPLETED_TRACK_IDS) }
     }
 
+    suspend fun saveActiveFeaturedTopicId(topicId: String) {
+        context.musePreferences.edit { preferences ->
+            preferences[KEY_ACTIVE_FEATURED_TOPIC_ID] = normalizeTopicId(topicId)
+        }
+    }
+
+    suspend fun markFeaturedTopicTrackCompleted(topicId: String, trackId: Long) {
+        val normalizedId = normalizeTopicId(topicId)
+        context.musePreferences.edit { preferences ->
+            preferences.migrateLegacyDefaultTopicIfNeeded(normalizedId)
+            val key = featuredTopicCompletedKey(normalizedId)
+            preferences[key] = preferences[key].orEmpty() + trackId.toString()
+            preferences.markFeaturedTopicInitialized(normalizedId)
+        }
+    }
+
+    suspend fun clearFeaturedTopicJourneyProgress(topicId: String) {
+        val normalizedId = normalizeTopicId(topicId)
+        context.musePreferences.edit { preferences ->
+            preferences.remove(featuredTopicCompletedKey(normalizedId))
+            preferences.remove(featuredTopicResumeTrackKey(normalizedId))
+            preferences.remove(featuredTopicResumePositionKey(normalizedId))
+            preferences.markFeaturedTopicInitialized(normalizedId)
+        }
+    }
+
+    suspend fun saveFeaturedTopicJourneyResumeState(topicId: String, trackId: Long?, positionMs: Long) {
+        val normalizedId = normalizeTopicId(topicId)
+        context.musePreferences.edit { preferences ->
+            preferences.migrateLegacyDefaultTopicIfNeeded(normalizedId)
+            if (trackId == null) {
+                preferences.remove(featuredTopicResumeTrackKey(normalizedId))
+                preferences.remove(featuredTopicResumePositionKey(normalizedId))
+            } else {
+                preferences[featuredTopicResumeTrackKey(normalizedId)] = trackId
+                preferences[featuredTopicResumePositionKey(normalizedId)] = positionMs.coerceAtLeast(0L)
+            }
+            preferences.markFeaturedTopicInitialized(normalizedId)
+        }
+    }
+
     suspend fun saveFeaturedJourneyResumeState(trackId: Long?, positionMs: Long) {
         context.musePreferences.edit { preferences ->
             if (trackId == null) {
@@ -260,6 +343,29 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    private fun MutablePreferences.markFeaturedTopicInitialized(topicId: String) {
+        this[KEY_INITIALIZED_FEATURED_TOPIC_IDS] = this[KEY_INITIALIZED_FEATURED_TOPIC_IDS].orEmpty() + topicId
+    }
+
+    private fun MutablePreferences.migrateLegacyDefaultTopicIfNeeded(topicId: String) {
+        if (topicId != DEFAULT_FEATURED_TOPIC_ID || topicId in this[KEY_INITIALIZED_FEATURED_TOPIC_IDS].orEmpty()) return
+        val legacyCompleted = this[KEY_FEATURED_COMPLETED_TRACK_IDS].orEmpty()
+        if (legacyCompleted.isNotEmpty()) this[featuredTopicCompletedKey(topicId)] = legacyCompleted
+        val legacyTrackId = this[KEY_FEATURED_JOURNEY_RESUME_TRACK_ID]
+        if (legacyTrackId != null) {
+            this[featuredTopicResumeTrackKey(topicId)] = legacyTrackId
+            this[featuredTopicResumePositionKey(topicId)] = this[KEY_FEATURED_JOURNEY_RESUME_POSITION_MS] ?: 0L
+        }
+    }
+
+    private fun normalizeTopicId(raw: String): String =
+        raw.trim().lowercase().replace(Regex("[^a-z0-9_-]+"), "-").trim('-').take(MAX_TOPIC_ID_LENGTH)
+            .ifBlank { DEFAULT_FEATURED_TOPIC_ID }
+
+    private fun featuredTopicCompletedKey(topicId: String) = stringSetPreferencesKey("featured_topic_${topicId}_completed")
+    private fun featuredTopicResumeTrackKey(topicId: String) = longPreferencesKey("featured_topic_${topicId}_resume_track")
+    private fun featuredTopicResumePositionKey(topicId: String) = longPreferencesKey("featured_topic_${topicId}_resume_position")
+
     private fun PlaybackBookmark.encode(): String = "$trackId$BOOKMARK_FIELD_SEPARATOR$positionMs$BOOKMARK_FIELD_SEPARATOR$savedAtEpochMs"
 
     private fun decodeBookmark(raw: String): PlaybackBookmark? {
@@ -283,6 +389,8 @@ class UserPreferencesRepository(private val context: Context) {
         private val KEY_FEATURED_COMPLETED_TRACK_IDS = stringSetPreferencesKey("featured_completed_track_ids")
         private val KEY_FEATURED_JOURNEY_RESUME_TRACK_ID = longPreferencesKey("featured_journey_resume_track_id")
         private val KEY_FEATURED_JOURNEY_RESUME_POSITION_MS = longPreferencesKey("featured_journey_resume_position_ms")
+        private val KEY_ACTIVE_FEATURED_TOPIC_ID = stringPreferencesKey("active_featured_topic_id")
+        private val KEY_INITIALIZED_FEATURED_TOPIC_IDS = stringSetPreferencesKey("initialized_featured_topic_ids")
         private val KEY_SLEEP_TIMER_END_EPOCH_MS = longPreferencesKey("sleep_timer_end_epoch_ms")
         private val KEY_SLEEP_AFTER_CURRENT_TRACK_ID = longPreferencesKey("sleep_after_current_track_id")
         private val KEY_RESUME_TRACK_ID = longPreferencesKey("resume_track_id")
@@ -292,5 +400,7 @@ class UserPreferencesRepository(private val context: Context) {
         private const val BOOKMARK_LIMIT = 30
         private const val BOOKMARK_SEPARATOR = ";"
         private const val BOOKMARK_FIELD_SEPARATOR = "|"
+        private const val DEFAULT_FEATURED_TOPIC_ID = "default"
+        private const val MAX_TOPIC_ID_LENGTH = 48
     }
 }

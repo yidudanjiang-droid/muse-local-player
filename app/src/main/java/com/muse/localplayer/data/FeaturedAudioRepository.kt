@@ -14,21 +14,41 @@ import org.json.JSONObject
 import kotlin.math.abs
 
 /**
- * Scans audio packaged inside app/src/main/assets/featured_audio.
- * The optional pack.json controls display copy and fallback metadata for one APK topic.
+ * Loads publisher-authored audio from APK assets.
+ *
+ * Legacy packages may keep one topic in featured_audio/pack.json. New packages can place multiple
+ * independent topics under featured_audio/topics/<topic-id>/pack.json. Each topic owns its own
+ * fallback metadata, cover, track overrides and program entries while retaining the same resilient
+ * compressed-asset playback path used by second-packaged APKs.
  */
 class FeaturedAudioRepository(private val context: Context) {
-    suspend fun loadPack(): FeaturedAudioPack = withContext(Dispatchers.IO) {
+    suspend fun loadCatalog(): FeaturedAudioCatalog = withContext(Dispatchers.IO) {
         clearStaleMaterializedAssets()
-        val configuration = readPackConfiguration()
-        val artworkUri = featuredArtworkUri(configuration.metadata)
-        val entries = listAudioAssetPaths()
+        val packs = listTopicRoots().mapNotNull { rootAssetPath ->
+            runCatching { loadPackFromRoot(rootAssetPath) }.getOrNull()
+        }.sortedWith(
+            compareBy<FeaturedAudioPack> { it.metadata.sortOrder }
+                .thenBy { it.metadata.title.lowercase() }
+                .thenBy(FeaturedAudioPack::id)
+        )
+        FeaturedAudioCatalog(topics = packs)
+    }
+
+    /** Legacy compatibility for callers that expect the first configured topic. */
+    suspend fun loadPack(): FeaturedAudioPack = loadCatalog().activeFallback ?: FeaturedAudioPack()
+
+    suspend fun loadTracks(): List<Track> = loadCatalog().topics.flatMap(FeaturedAudioPack::tracks)
+
+    private fun loadPackFromRoot(rootAssetPath: String): FeaturedAudioPack {
+        val configuration = readPackConfiguration(rootAssetPath)
+        val artworkUri = featuredArtworkUri(configuration.metadata, rootAssetPath)
+        val entries = listAudioAssetPaths(rootAssetPath)
             .mapNotNull { assetPath ->
-                // 二次打包时单个文件损坏、标签异常或缓存准备失败，不应让整个专题消失。
+                // A bad second-packaged file must never make the remaining topic disappear.
                 runCatching {
-                    val override = configuration.trackOverrides[assetPath]
-                        ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
+                    val override = configuration.overrideFor(assetPath, rootAssetPath)
                     assetPath to assetPath.toFeaturedTrack(
+                        packId = configuration.id,
                         pack = configuration.metadata,
                         override = override,
                         artworkUri = artworkUri
@@ -42,24 +62,44 @@ class FeaturedAudioRepository(private val context: Context) {
             )
         val tracks = entries.map { it.second }
         val programsByTrackId = entries.mapNotNull { (assetPath, track) ->
-            val override = configuration.trackOverrides[assetPath]
-                ?: configuration.trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
-            override?.program?.takeIf(FeaturedTrackProgram::hasContent)?.let { track.id to it }
+            configuration.overrideFor(assetPath, rootAssetPath)?.program
+                ?.takeIf(FeaturedTrackProgram::hasContent)
+                ?.let { track.id to it }
         }.toMap()
-        FeaturedAudioPack(
+        return FeaturedAudioPack(
+            id = configuration.id,
+            rootAssetPath = rootAssetPath,
             metadata = configuration.metadata,
             tracks = tracks,
             programsByTrackId = programsByTrackId
         )
     }
 
-    suspend fun loadTracks(): List<Track> = loadPack().tracks
+    private fun listTopicRoots(): List<String> {
+        val topicDirectory = "$FEATURED_AUDIO_ROOT/$TOPICS_DIRECTORY"
+        val declaredTopics = context.assets.list(topicDirectory)
+            .orEmpty()
+            .map { name -> "$topicDirectory/$name" }
+            .filter { root ->
+                context.assets.list(root).orEmpty().isNotEmpty() &&
+                    (assetExists("$root/$PACK_FILE_NAME") || listAudioAssetPaths(root).isNotEmpty())
+            }
+        // A populated topics directory intentionally becomes the catalog source. This prevents its
+        // nested audio from being silently duplicated into the legacy default topic.
+        return declaredTopics.ifEmpty { listOf(FEATURED_AUDIO_ROOT) }
+    }
 
-    private fun readPackConfiguration(): PackConfiguration {
+    private fun readPackConfiguration(rootAssetPath: String): PackConfiguration {
+        val fallbackId = if (rootAssetPath == FEATURED_AUDIO_ROOT) {
+            DEFAULT_TOPIC_ID
+        } else {
+            rootAssetPath.substringAfterLast('/').normalizeTopicId().ifBlank { DEFAULT_TOPIC_ID }
+        }
         return runCatching {
-            val rawJson = context.assets.open(PACK_METADATA_FILE).bufferedReader().use { it.readText() }
+            val rawJson = context.assets.open("$rootAssetPath/$PACK_FILE_NAME").bufferedReader().use { it.readText() }
             val json = JSONObject(rawJson)
             PackConfiguration(
+                id = json.optionalText("id")?.normalizeTopicId()?.ifBlank { fallbackId } ?: fallbackId,
                 metadata = FeaturedPackMetadata(
                     title = json.textOrDefault("title", DEFAULT_TITLE),
                     eyebrow = json.textOrDefault("eyebrow", DEFAULT_EYEBROW),
@@ -70,11 +110,12 @@ class FeaturedAudioRepository(private val context: Context) {
                     identityLabel = json.optionalText("identity"),
                     editionLabel = json.optionalText("edition"),
                     listeningGuide = json.optionalText("listeningGuide"),
-                    coverAssetPath = json.optionalText("coverAsset")
+                    coverAssetPath = json.optionalText("coverAsset"),
+                    sortOrder = json.optInt("sortOrder", 0)
                 ),
                 trackOverrides = json.trackOverrides()
             )
-        }.getOrElse { PackConfiguration() }
+        }.getOrElse { PackConfiguration(id = fallbackId) }
     }
 
     private fun JSONObject.textOrDefault(key: String, fallback: String): String =
@@ -82,6 +123,12 @@ class FeaturedAudioRepository(private val context: Context) {
 
     private fun JSONObject.optionalText(key: String): String? =
         optString(key).trim().takeIf { it.isNotBlank() }
+
+    private fun String.normalizeTopicId(): String =
+        trim().lowercase()
+            .replace(Regex("[^a-z0-9_-]+"), "-")
+            .trim('-')
+            .take(MAX_TOPIC_ID_LENGTH)
 
     private fun JSONObject.trackOverrides(): Map<String, TrackOverride> {
         val tracksObject = optJSONObject("tracks") ?: return emptyMap()
@@ -103,6 +150,11 @@ class FeaturedAudioRepository(private val context: Context) {
         }
         return overrides
     }
+
+    private fun PackConfiguration.overrideFor(assetPath: String, rootAssetPath: String): TrackOverride? =
+        trackOverrides[assetPath]
+            ?: trackOverrides[assetPath.removePrefix("$FEATURED_AUDIO_ROOT/")]
+            ?: trackOverrides[assetPath.removePrefix("$rootAssetPath/")]
 
     private fun JSONObject.toFeaturedTrackProgram(): FeaturedTrackProgram? {
         val chapters = optJSONArray("chapters").toFeaturedChapters()
@@ -142,13 +194,9 @@ class FeaturedAudioRepository(private val context: Context) {
         return minutes * 60_000L + seconds * 1_000L + fraction
     }
 
-    /**
-     * 既支持标准的 featured_audio/ 目录，也支持二次打包时直接添加到任意 assets 子目录的音频。
-     * assets 目录通常规模有限；递归发现能避免二次打包工具改变目录层级后内容被静默忽略。
-     */
-    private fun listAudioAssetPaths(directory: String = ""): List<String> {
+    private fun listAudioAssetPaths(directory: String): List<String> {
         return context.assets.list(directory).orEmpty().flatMap { name ->
-            val childPath = if (directory.isBlank()) name else "$directory/$name"
+            val childPath = "$directory/$name"
             val children = context.assets.list(childPath).orEmpty()
             when {
                 children.isNotEmpty() -> listAudioAssetPaths(childPath)
@@ -159,6 +207,7 @@ class FeaturedAudioRepository(private val context: Context) {
     }
 
     private fun String.toFeaturedTrack(
+        packId: String,
         pack: FeaturedPackMetadata,
         override: TrackOverride?,
         artworkUri: Uri
@@ -179,19 +228,20 @@ class FeaturedAudioRepository(private val context: Context) {
             title = override?.title ?: metadata.title ?: fallbackTitle,
             artist = override?.artist ?: metadata.artist ?: pack.defaultArtist,
             album = albumTitle,
-            albumId = -abs(albumTitle.hashCode().toLong()) - 2L,
+            albumId = -abs(("$packId:$albumTitle").hashCode().toLong()) - 2L,
             durationMs = metadata.durationMs,
             uri = resolvePlayableUri(this),
             artworkUri = artworkUri,
             trackNumber = override?.trackNumber ?: metadata.trackNumber ?: fallbackTrackNumber,
             year = override?.year ?: metadata.year ?: 0,
-            source = TrackSource.FEATURED_ASSET
+            source = TrackSource.FEATURED_ASSET,
+            featuredTopicId = packId
         )
     }
 
     /**
-     * 标准构建会保留音频为未压缩 assets，Media3 可直接读取 asset:/// URI。
-     * 若二次打包工具压缩了新加入的文件，则复制到应用私有缓存后以 file:// URI 播放。
+     * Standard builds keep audio uncompressed for direct Media3 asset playback. If a secondary
+     * packer compresses added audio, materialize a private copy and continue with file playback.
      */
     private fun resolvePlayableUri(assetPath: String): Uri {
         if (runCatching { context.assets.openFd(assetPath).use { } }.isSuccess) {
@@ -247,26 +297,21 @@ class FeaturedAudioRepository(private val context: Context) {
 
     private fun readMetadata(assetPath: String): AssetMetadata {
         readMetadataFromDescriptor(assetPath).getOrNull()?.let { return it }
-        // 外部二次打包工具可能压缩新加入的音频，AssetFileDescriptor 将不可用。
-        // 仅临时复制到 cache 探测标签，随后立刻删除，不会持久化或占用用户存储。
+        // Secondary packers may compress new assets; probe a disposable private copy instead.
         return readMetadataFromTemporaryFile(assetPath).getOrDefault(AssetMetadata())
     }
 
     private fun readMetadataFromDescriptor(assetPath: String): Result<AssetMetadata> = runCatching {
         withRetriever { retriever ->
             context.assets.openFd(assetPath).use { descriptor ->
-                retriever.setDataSource(
-                    descriptor.fileDescriptor,
-                    descriptor.startOffset,
-                    descriptor.length
-                )
+                retriever.setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.length)
                 retriever.toAssetMetadata()
             }
         }
     }
 
     private fun readMetadataFromTemporaryFile(assetPath: String): Result<AssetMetadata> = runCatching {
-        val suffix = ".${assetPath.substringAfterLast('.', "audio")}" 
+        val suffix = ".${assetPath.substringAfterLast('.', "audio")}"
         val temporaryFile = File.createTempFile("muse_asset_probe_", suffix, context.cacheDir)
         try {
             context.assets.open(assetPath, AssetManager.ACCESS_STREAMING).use { input ->
@@ -294,20 +339,41 @@ class FeaturedAudioRepository(private val context: Context) {
         title = text(MediaMetadataRetriever.METADATA_KEY_TITLE),
         artist = text(MediaMetadataRetriever.METADATA_KEY_ARTIST),
         album = text(MediaMetadataRetriever.METADATA_KEY_ALBUM),
-        durationMs = text(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull()
-            ?.takeIf { it > 0L }
-            ?: 0L,
-        trackNumber = text(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)
-            ?.substringBefore('/')
-            ?.toIntOrNull(),
+        durationMs = text(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.takeIf { it > 0L } ?: 0L,
+        trackNumber = text(MediaMetadataRetriever.METADATA_KEY_CD_TRACK_NUMBER)?.substringBefore('/')?.toIntOrNull(),
         year = text(MediaMetadataRetriever.METADATA_KEY_YEAR)?.toIntOrNull()
     )
 
     private fun MediaMetadataRetriever.text(key: Int): String? =
         extractMetadata(key)?.trim()?.takeUnless { it.isBlank() || it.equals("<unknown>", true) }
 
+    private fun featuredArtworkUri(pack: FeaturedPackMetadata, rootAssetPath: String): Uri {
+        val configuredPath = resolveCoverAssetPath(pack.coverAssetPath, rootAssetPath)
+        return configuredPath?.let { Uri.parse("file:///android_asset/$it") }
+            ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.muse_featured_hero}")
+    }
+
+    private fun resolveCoverAssetPath(rawPath: String?, rootAssetPath: String): String? {
+        val normalized = rawPath
+            ?.trim()
+            ?.replace('\\', '/')
+            ?.removePrefix("./")
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val candidates = buildList {
+            add(normalized)
+            if (!normalized.startsWith("$FEATURED_AUDIO_ROOT/")) add("$rootAssetPath/$normalized")
+        }.distinct()
+        return candidates.firstOrNull { candidate ->
+            candidate.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS && assetExists(candidate)
+        }
+    }
+
+    private fun assetExists(path: String): Boolean =
+        runCatching { context.assets.open(path).close() }.isSuccess
+
     private data class PackConfiguration(
+        val id: String = DEFAULT_TOPIC_ID,
         val metadata: FeaturedPackMetadata = FeaturedPackMetadata(),
         val trackOverrides: Map<String, TrackOverride> = emptyMap()
     )
@@ -330,41 +396,19 @@ class FeaturedAudioRepository(private val context: Context) {
         val year: Int? = null
     )
 
-    private fun featuredArtworkUri(pack: FeaturedPackMetadata): Uri {
-        val configuredPath = resolveCoverAssetPath(pack.coverAssetPath)
-        return configuredPath?.let { Uri.parse("file:///android_asset/$it") }
-            ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.muse_featured_hero}")
-    }
-
-    private fun resolveCoverAssetPath(rawPath: String?): String? {
-        val normalized = rawPath
-            ?.trim()
-            ?.replace('\\', '/')
-            ?.removePrefix("./")
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-        val candidates = buildList {
-            add(normalized)
-            if (!normalized.startsWith("$FEATURED_AUDIO_ROOT/")) {
-                add("$FEATURED_AUDIO_ROOT/$normalized")
-            }
-        }
-        return candidates.firstOrNull { candidate ->
-            candidate.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS &&
-                runCatching { context.assets.open(candidate).close() }.isSuccess
-        }
-    }
-
     private companion object {
         const val FEATURED_AUDIO_ROOT = "featured_audio"
-        const val PACK_METADATA_FILE = "$FEATURED_AUDIO_ROOT/pack.json"
+        const val TOPICS_DIRECTORY = "topics"
+        const val PACK_FILE_NAME = "pack.json"
         const val MATERIALIZED_ASSET_DIRECTORY = "muse_featured_audio"
+        const val DEFAULT_TOPIC_ID = "default"
         const val DEFAULT_TITLE = "本期专题音频"
         const val DEFAULT_EYEBROW = "MUSE · FEATURED"
         const val DEFAULT_DESCRIPTION = "内置于 APK 的专题声音内容。"
         const val DEFAULT_ARTIST = "精选内容"
         const val DEFAULT_ALBUM = "专题音频包"
         const val DEFAULT_PLAY_LABEL = "从头播放"
+        const val MAX_TOPIC_ID_LENGTH = 48
         val AUDIO_EXTENSIONS = setOf("mp3", "m4a", "aac", "ogg", "wav", "flac")
         val IMAGE_EXTENSIONS = setOf("png", "webp", "jpg", "jpeg")
         val TIMESTAMP_REGEX = Regex("(\\d{1,3}):(\\d{2})(?:[.:](\\d{1,3}))?")

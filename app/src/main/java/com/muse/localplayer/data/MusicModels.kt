@@ -19,7 +19,9 @@ data class Track(
     val dateAddedSeconds: Long = 0L,
     val trackNumber: Int = 0,
     val year: Int = 0,
-    val source: TrackSource = TrackSource.DEVICE
+    val source: TrackSource = TrackSource.DEVICE,
+    /** Stable topic ID for APK-packaged featured audio; null for device music. */
+    val featuredTopicId: String? = null
 ) {
     val durationLabel: String
         get() {

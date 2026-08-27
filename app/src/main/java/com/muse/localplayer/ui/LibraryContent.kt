@@ -5,7 +5,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.ContentSearchResult
+import com.muse.localplayer.data.FeaturedAudioPack
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedTopicProgress
 import com.muse.localplayer.data.LibraryTab
 import com.muse.localplayer.data.Track
 import com.muse.localplayer.playback.LibraryUiState
@@ -16,6 +18,9 @@ internal fun LibraryContent(
     selectedTab: LibraryTab,
     tracks: List<Track>,
     featuredTracks: List<Track>,
+    featuredTopics: List<FeaturedAudioPack>,
+    activeFeaturedTopicId: String?,
+    featuredTopicProgresses: Map<String, FeaturedTopicProgress>,
     featuredJourney: PlayerViewModel.FeaturedJourneyState,
     featuredMetadata: FeaturedPackMetadata,
     visibleTracks: List<Track>,
@@ -43,6 +48,7 @@ internal fun LibraryContent(
     onContinueFeaturedJourney: () -> Unit,
     onRestartFeaturedJourney: () -> Unit,
     onPlayFeaturedTracks: () -> Unit,
+    onSelectFeaturedTopic: (String) -> Unit,
     onAddTracksToQueue: (List<Track>) -> Unit,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
     onShowSongs: () -> Unit,
@@ -65,6 +71,9 @@ internal fun LibraryContent(
     when (selectedTab) {
         LibraryTab.HOME -> HomeScreen(
             featuredTracks = featuredTracks,
+            featuredTopics = featuredTopics,
+            activeFeaturedTopicId = activeFeaturedTopicId,
+            featuredTopicProgresses = featuredTopicProgresses,
             featuredJourney = featuredJourney,
             featuredMetadata = featuredMetadata,
             libraryUiState = libraryUiState,
@@ -87,6 +96,7 @@ internal fun LibraryContent(
             onContinueFeaturedJourney = onContinueFeaturedJourney,
             onRestartFeaturedJourney = onRestartFeaturedJourney,
             onPlayFeaturedTracks = onPlayFeaturedTracks,
+            onSelectFeaturedTopic = onSelectFeaturedTopic,
             onAddFeaturedTracksToQueue = { onAddTracksToQueue(featuredTracks) },
             onSongsClick = onShowSongs,
             onMore = onMore,

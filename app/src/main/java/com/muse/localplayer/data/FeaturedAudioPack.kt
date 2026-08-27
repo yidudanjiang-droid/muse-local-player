@@ -1,6 +1,17 @@
 package com.muse.localplayer.data
 
+/** All publisher-authored offline topics packaged in the current APK. */
+data class FeaturedAudioCatalog(
+    val topics: List<FeaturedAudioPack> = emptyList()
+) {
+    val activeFallback: FeaturedAudioPack?
+        get() = topics.firstOrNull()
+}
+
+/** One independently playable topic inside the APK assets directory. */
 data class FeaturedAudioPack(
+    val id: String = "default",
+    val rootAssetPath: String = "featured_audio",
     val metadata: FeaturedPackMetadata = FeaturedPackMetadata(),
     val tracks: List<Track> = emptyList(),
     val programsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
@@ -70,5 +81,7 @@ data class FeaturedPackMetadata(
     /** Optional first-listen guide shown on the home screen. */
     val listeningGuide: String? = null,
     /** Optional image asset path configured by pack.json, for example featured_audio/cover.webp. */
-    val coverAssetPath: String? = null
+    val coverAssetPath: String? = null,
+    /** Optional ascending ordering for packs in featured_audio/topics. */
+    val sortOrder: Int = 0
 )
