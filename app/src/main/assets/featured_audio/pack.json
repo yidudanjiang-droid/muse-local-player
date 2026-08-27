@@ -4,5 +4,8 @@
   "description": "内置于 APK 的专题声音内容。",
   "defaultArtist": "精选内容",
   "defaultAlbum": "专题音频包",
-  "playLabel": "从头播放"
+  "playLabel": "从头播放",
+  "identity": "Muse 专题内容模板",
+  "edition": "Starter Pack · 2026",
+  "listeningGuide": "放入你的专题音频后，从头播放即可保留内容编排；章节、歌词和书签都可离线使用。"
 }

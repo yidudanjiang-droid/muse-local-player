@@ -701,6 +701,9 @@ internal fun HomeScreen(
             )
         }
         item {
+            FeaturedIdentityGuide(metadata = featuredMetadata, trackCount = featuredTracks.size)
+        }
+        item {
             SleepTimerCard(
                 remainingMs = sleepTimerRemainingMs,
                 onSetTimer = onSetSleepTimer,
@@ -818,11 +821,21 @@ private fun FeaturedPackageHero(
                 modifier = Modifier.fillMaxSize().background(Color(0x33000000)).padding(24.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
-                ) {
-                    Text(metadata.eyebrow, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                    ) {
+                        Text(metadata.eyebrow, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    metadata.editionLabel?.let { edition ->
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = Color(0xD926335C)
+                        ) {
+                            Text(edition, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
                 Column {
                     Text(metadata.title, style = MaterialTheme.typography.headlineSmall, color = Color.White)
@@ -851,6 +864,32 @@ private fun FeaturedPackageHero(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedIdentityGuide(metadata: FeaturedPackMetadata, trackCount: Int) {
+    val identity = metadata.identityLabel ?: "Muse 离线专题"
+    val guide = metadata.listeningGuide ?: when {
+        trackCount == 0 -> "将音频放入 APK 的 assets 后，回到这里开始你的专题收听。"
+        else -> "建议从头播放以保留内容编排；播放页可查看章节、歌词和节目笔记，并随时保存书签。"
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f))
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text("本期导览", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.tertiary)
+            Spacer(Modifier.height(6.dp))
+            Text(identity, style = MaterialTheme.typography.titleLarge)
+            metadata.editionLabel?.let { edition ->
+                Spacer(Modifier.height(3.dp))
+                Text(edition, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.72f))
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(guide, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.86f))
         }
     }
 }

@@ -67,6 +67,9 @@ class FeaturedAudioRepository(private val context: Context) {
                     defaultArtist = json.textOrDefault("defaultArtist", DEFAULT_ARTIST),
                     defaultAlbum = json.textOrDefault("defaultAlbum", DEFAULT_ALBUM),
                     playLabel = json.textOrDefault("playLabel", DEFAULT_PLAY_LABEL),
+                    identityLabel = json.optionalText("identity"),
+                    editionLabel = json.optionalText("edition"),
+                    listeningGuide = json.optionalText("listeningGuide"),
                     coverAssetPath = json.optionalText("coverAsset")
                 ),
                 trackOverrides = json.trackOverrides()

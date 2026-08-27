@@ -60,6 +60,12 @@ data class FeaturedPackMetadata(
     val defaultArtist: String = "精选内容",
     val defaultAlbum: String = "专题音频包",
     val playLabel: String = "从头播放",
+    /** Optional publisher identity for this pack, for example "城市夜行 · Vol. 01". */
+    val identityLabel: String? = null,
+    /** Optional edition or update label, for example "2026 夏季修订版". */
+    val editionLabel: String? = null,
+    /** Optional first-listen guide shown on the home screen. */
+    val listeningGuide: String? = null,
     /** Optional image asset path configured by pack.json, for example featured_audio/cover.webp. */
     val coverAssetPath: String? = null
 )
