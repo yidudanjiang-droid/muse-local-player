@@ -3,6 +3,11 @@ package com.muse.localplayer.playback
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ComponentName
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -38,9 +43,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+enum class PlayerFeedbackAction {
+    RETRY_FAILED_TRACK,
+    RESUME_PLAYBACK
+}
+
 data class PlayerFeedback(
     val text: String,
-    val actionLabel: String? = null
+    val actionLabel: String? = null,
+    val action: PlayerFeedbackAction? = null
 )
 
 class PlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -132,6 +143,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _playerMessage = MutableStateFlow<PlayerFeedback?>(null)
     val playerMessage = _playerMessage.asStateFlow()
 
+    private val audioManager = application.getSystemService(AudioManager::class.java)
+    private val _audioOutputLabel = MutableStateFlow("正在识别输出设备")
+    val audioOutputLabel = _audioOutputLabel.asStateFlow()
+
     private var controller: MediaController? = null
     private var progressJob: Job? = null
     private var fadeJob: Job? = null
@@ -161,6 +176,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val failedTrackIds = mutableSetOf<Long>()
     private val sessionToken = SessionToken(application, ComponentName(application, MusicPlaybackService::class.java))
     private val controllerFuture = MediaController.Builder(application, sessionToken).buildAsync()
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = refreshAudioOutputLabel()
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = refreshAudioOutputLabel()
+    }
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -172,6 +191,20 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 progressJob = null
                 refreshPlaybackState(forcePersist = true)
             }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (playWhenReady || _currentTrack.value == null) return
+            val text = when (reason) {
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "其他音频已接管播放，Muse 已暂停。"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "音频设备已断开，Muse 已暂停以保护收听体验。"
+                else -> return
+            }
+            _playerMessage.value = PlayerFeedback(
+                text = text,
+                actionLabel = "继续",
+                action = PlayerFeedbackAction.RESUME_PLAYBACK
+            )
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -221,12 +254,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     "$title 无法播放。请确认文件仍在设备中且格式受支持。"
                 },
-                actionLabel = failedTrack?.let { "重试" }
+                actionLabel = failedTrack?.let { "重试" },
+                action = failedTrack?.let { PlayerFeedbackAction.RETRY_FAILED_TRACK }
             )
         }
     }
 
     init {
+        runCatching {
+            audioManager.registerAudioDeviceCallback(audioDeviceCallback, Handler(Looper.getMainLooper()))
+        }
+        refreshAudioOutputLabel()
         observePreferences()
         reloadLibrary()
         controllerFuture.addListener({
@@ -704,6 +742,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Retries the most recently failed track without weakening automatic skip protection for other files. */
+    fun resumePlaybackFromInterruption(): Boolean {
+        val activeController = controller ?: return false
+        if (activeController.mediaItemCount == 0 || activeController.currentMediaItem == null) return false
+        startOrResume(activeController, forceFadeIn = true)
+        return true
+    }
+
     fun retryLastFailedTrack(): Boolean {
         val track = lastFailedTrack ?: return false
         failedTrackIds.remove(track.id)
@@ -1194,6 +1239,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         tracksBySource = _tracks.value.groupBy(Track::source)
     }
 
+    private fun refreshAudioOutputLabel() {
+        val devices = runCatching { audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList() }.getOrDefault(emptyList())
+        _audioOutputLabel.value = when {
+            devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO } -> "蓝牙音频设备"
+            devices.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET } -> "有线耳机"
+            devices.any { it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY } -> "USB 音频设备"
+            else -> "手机扬声器"
+        }
+    }
+
     private fun formatTimestamp(positionMs: Long): String {
         val totalSeconds = positionMs.coerceAtLeast(0L) / 1_000L
         return "%d:%02d".format(totalSeconds / 60L, totalSeconds % 60L)
@@ -1230,6 +1285,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         lyricsLoadJob?.cancel()
         lyricsLoadJob = null
         stopMediaStoreObservation()
+        runCatching { audioManager.unregisterAudioDeviceCallback(audioDeviceCallback) }
         controller?.removeListener(playerListener)
         MediaController.releaseFuture(controllerFuture)
         super.onCleared()

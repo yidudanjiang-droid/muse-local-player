@@ -135,6 +135,7 @@ import com.muse.localplayer.data.LibraryTab
 import com.muse.localplayer.data.LyricLine
 import com.muse.localplayer.data.Track
 import com.muse.localplayer.playback.LibraryUiState
+import com.muse.localplayer.playback.PlayerFeedbackAction
 import com.muse.localplayer.playback.PlayerViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -207,8 +208,12 @@ fun MuseMusicApp(
                 actionLabel = feedback.actionLabel
             )
             viewModel.dismissPlayerMessage()
-            if (result == SnackbarResult.ActionPerformed && feedback.actionLabel != null) {
-                viewModel.retryLastFailedTrack()
+            if (result == SnackbarResult.ActionPerformed) {
+                when (feedback.action) {
+                    PlayerFeedbackAction.RETRY_FAILED_TRACK -> viewModel.retryLastFailedTrack()
+                    PlayerFeedbackAction.RESUME_PLAYBACK -> viewModel.resumePlaybackFromInterruption()
+                    null -> Unit
+                }
             }
         }
     }
@@ -1690,6 +1695,7 @@ private fun PlayerSheetWithProgress(
     val durationMs by viewModel.durationMs.collectAsStateWithLifecycle()
     val lyrics by viewModel.currentLyrics.collectAsStateWithLifecycle()
     val program by viewModel.currentProgram.collectAsStateWithLifecycle()
+    val audioOutputLabel by viewModel.audioOutputLabel.collectAsStateWithLifecycle()
     PlayerSheet(
         track = track,
         isPlaying = isPlaying,
@@ -1698,6 +1704,7 @@ private fun PlayerSheetWithProgress(
         durationMs = durationMs,
         lyrics = lyrics,
         program = program,
+        audioOutputLabel = audioOutputLabel,
         repeatMode = repeatMode,
         shuffleEnabled = shuffleEnabled,
         playbackSpeed = playbackSpeed,
@@ -1732,6 +1739,7 @@ private fun PlayerSheet(
     durationMs: Long,
     lyrics: List<LyricLine>,
     program: FeaturedTrackProgram?,
+    audioOutputLabel: String,
     repeatMode: Int,
     shuffleEnabled: Boolean,
     playbackSpeed: Float,
@@ -1784,6 +1792,7 @@ private fun PlayerSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("正在播放", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Text(track.album, style = MaterialTheme.typography.bodySmall, color = Color(0xFFD6E1F6), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("输出 · $audioOutputLabel", style = MaterialTheme.typography.labelSmall, color = Color(0xFFB6C6E9), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 TextButton(onClick = { speedMenuExpanded = true }) { Text("${formatSpeed(playbackSpeed)}×") }
                 DropdownMenu(expanded = speedMenuExpanded, onDismissRequest = { speedMenuExpanded = false }) {
