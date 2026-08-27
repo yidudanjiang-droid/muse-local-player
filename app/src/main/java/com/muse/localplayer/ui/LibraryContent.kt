@@ -16,6 +16,7 @@ internal fun LibraryContent(
     selectedTab: LibraryTab,
     tracks: List<Track>,
     featuredTracks: List<Track>,
+    featuredJourney: PlayerViewModel.FeaturedJourneyState,
     featuredMetadata: FeaturedPackMetadata,
     visibleTracks: List<Track>,
     contentSearchResults: List<ContentSearchResult>,
@@ -39,6 +40,8 @@ internal fun LibraryContent(
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
     onPlayContentSearchResult: (ContentSearchResult) -> Unit,
+    onContinueFeaturedJourney: () -> Unit,
+    onRestartFeaturedJourney: () -> Unit,
     onPlayFeaturedTracks: () -> Unit,
     onAddTracksToQueue: (List<Track>) -> Unit,
     onPlayAlbum: (List<Track>, Track?) -> Unit,
@@ -61,6 +64,7 @@ internal fun LibraryContent(
     when (selectedTab) {
         LibraryTab.HOME -> HomeScreen(
             featuredTracks = featuredTracks,
+            featuredJourney = featuredJourney,
             featuredMetadata = featuredMetadata,
             libraryUiState = libraryUiState,
             contentPadding = contentPadding,
@@ -79,6 +83,8 @@ internal fun LibraryContent(
             onRequestNotificationPermission = onRequestNotificationPermission,
             onRescan = onRescan,
             onPlay = onPlay,
+            onContinueFeaturedJourney = onContinueFeaturedJourney,
+            onRestartFeaturedJourney = onRestartFeaturedJourney,
             onPlayFeaturedTracks = onPlayFeaturedTracks,
             onAddFeaturedTracksToQueue = { onAddTracksToQueue(featuredTracks) },
             onSongsClick = onShowSongs,

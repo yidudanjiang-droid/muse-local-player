@@ -153,6 +153,7 @@ fun MuseMusicApp(
 ) {
     val tracks by viewModel.tracks.collectAsStateWithLifecycle()
     val featuredTracks by viewModel.featuredTracks.collectAsStateWithLifecycle()
+    val featuredJourney by viewModel.featuredJourney.collectAsStateWithLifecycle()
     val featuredPackMetadata by viewModel.featuredPackMetadata.collectAsStateWithLifecycle()
     val libraryUiState by viewModel.libraryUiState.collectAsStateWithLifecycle()
     val queue by viewModel.queue.collectAsStateWithLifecycle()
@@ -369,6 +370,7 @@ fun MuseMusicApp(
                     selectedTab = selectedTab,
                     tracks = tracks,
                     featuredTracks = featuredTracks,
+                    featuredJourney = featuredJourney,
                     featuredMetadata = featuredPackMetadata,
                     visibleTracks = filteredTracks,
                     contentSearchResults = contentSearchResults,
@@ -392,6 +394,8 @@ fun MuseMusicApp(
                     onRescan = viewModel::reloadLibrary,
                     onPlay = viewModel::play,
                     onPlayContentSearchResult = viewModel::playSearchResult,
+                    onContinueFeaturedJourney = viewModel::continueFeaturedJourney,
+                    onRestartFeaturedJourney = viewModel::restartFeaturedJourney,
                     onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                     onAddTracksToQueue = { tracksToAdd ->
                         val addedCount = viewModel.addTracksToQueue(tracksToAdd)
@@ -422,6 +426,7 @@ fun MuseMusicApp(
                             selectedTab = selectedTab,
                             tracks = tracks,
                             featuredTracks = featuredTracks,
+                            featuredJourney = featuredJourney,
                             featuredMetadata = featuredPackMetadata,
                             visibleTracks = filteredTracks,
                             contentSearchResults = contentSearchResults,
@@ -445,6 +450,8 @@ fun MuseMusicApp(
                             onRescan = viewModel::reloadLibrary,
                             onPlay = viewModel::play,
                             onPlayContentSearchResult = viewModel::playSearchResult,
+                            onContinueFeaturedJourney = viewModel::continueFeaturedJourney,
+                            onRestartFeaturedJourney = viewModel::restartFeaturedJourney,
                             onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                             onAddTracksToQueue = { tracksToAdd ->
                                 val addedCount = viewModel.addTracksToQueue(tracksToAdd)
@@ -649,6 +656,7 @@ private fun NavigationDrawerHeader() {
 @Composable
 internal fun HomeScreen(
     featuredTracks: List<Track>,
+    featuredJourney: PlayerViewModel.FeaturedJourneyState,
     featuredMetadata: FeaturedPackMetadata,
     libraryUiState: LibraryUiState,
     contentPadding: PaddingValues,
@@ -667,6 +675,8 @@ internal fun HomeScreen(
     onRequestNotificationPermission: () -> Unit,
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
+    onContinueFeaturedJourney: () -> Unit,
+    onRestartFeaturedJourney: () -> Unit,
     onPlayFeaturedTracks: () -> Unit,
     onAddFeaturedTracksToQueue: () -> Unit,
     onSongsClick: () -> Unit,
@@ -707,6 +717,15 @@ internal fun HomeScreen(
         }
         item {
             FeaturedIdentityGuide(metadata = featuredMetadata, trackCount = featuredTracks.size)
+        }
+        if (featuredJourney.totalCount > 0) {
+            item {
+                FeaturedJourneyCard(
+                    journey = featuredJourney,
+                    onContinue = onContinueFeaturedJourney,
+                    onRestart = onRestartFeaturedJourney
+                )
+            }
         }
         item {
             SleepTimerCard(
@@ -895,6 +914,69 @@ private fun FeaturedIdentityGuide(metadata: FeaturedPackMetadata, trackCount: In
             }
             Spacer(Modifier.height(10.dp))
             Text(guide, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.86f))
+        }
+    }
+}
+
+@Composable
+private fun FeaturedJourneyCard(
+    journey: PlayerViewModel.FeaturedJourneyState,
+    onContinue: () -> Unit,
+    onRestart: () -> Unit
+) {
+    val progress = if (journey.totalCount > 0) {
+        journey.completedCount.toFloat() / journey.totalCount.toFloat()
+    } else 0f
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(
+            containerColor = if (journey.isComplete) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                if (journey.isComplete) "本期已完成" else "专题旅程",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (journey.isComplete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (journey.isComplete) "已完整收听本期专题" else "已完成 ${journey.completedCount}/${journey.totalCount} 首",
+                style = MaterialTheme.typography.titleLarge
+            )
+            Spacer(Modifier.height(10.dp))
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth(),
+                color = if (journey.isComplete) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                trackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f)
+            )
+            Spacer(Modifier.height(10.dp))
+            if (journey.isComplete) {
+                Text("从头再听可重新开启本期旅程，旧的章节、歌词和书签仍会保留。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f))
+                Spacer(Modifier.height(12.dp))
+                FilledTonalButton(onClick = onRestart) {
+                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("重新开始")
+                }
+            } else {
+                val nextTrack = journey.nextTrack
+                Text(
+                    nextTrack?.let { "下一步 · ${it.title} · ${it.artist}" } ?: "从头播放即可开始本期旅程。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(12.dp))
+                FilledTonalButton(onClick = onContinue) {
+                    Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (journey.completedCount == 0) "开始旅程" else "继续旅程")
+                }
+            }
         }
     }
 }

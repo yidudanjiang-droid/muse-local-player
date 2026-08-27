@@ -65,6 +65,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val index: Int
     )
 
+    data class FeaturedJourneyState(
+        val completedCount: Int = 0,
+        val totalCount: Int = 0,
+        val nextTrack: Track? = null,
+        val isComplete: Boolean = false
+    )
+
     private val musicRepository = MusicRepository(application)
     private val featuredAudioRepository = FeaturedAudioRepository(application)
     private val lyricsRepository = LyricsRepository(application)
@@ -76,6 +83,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _featuredTracks = MutableStateFlow<List<Track>>(emptyList())
     val featuredTracks = _featuredTracks.asStateFlow()
+
+    private val _featuredJourney = MutableStateFlow(FeaturedJourneyState())
+    val featuredJourney = _featuredJourney.asStateFlow()
 
     private val _featuredPackMetadata = MutableStateFlow(FeaturedPackMetadata())
     val featuredPackMetadata = _featuredPackMetadata.asStateFlow()
@@ -167,6 +177,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var stableDurationMs: Long = 0L
     private var playbackHistoryIds: List<Long> = emptyList()
     private var savedBookmarks: List<PlaybackBookmark> = emptyList()
+    private var completedFeaturedTrackIds: Set<Long> = emptySet()
     private var pendingBookmark: BookmarkItem? = null
     private var lastClearedQueue: List<Track> = emptyList()
     private var lastClearedCurrentTrack: Track? = null
@@ -338,6 +349,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         viewModelScope.launch {
+            preferencesRepository.featuredCompletedTrackIds.collect { completedIds ->
+                completedFeaturedTrackIds = completedIds
+                refreshFeaturedJourney()
+            }
+        }
+        viewModelScope.launch {
             preferencesRepository.sleepTimerEndEpochMs.collect(::scheduleSleepTimer)
         }
         viewModelScope.launch {
@@ -361,8 +378,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             val featuredPack = loadFeaturedPackIfNeeded()
             val featured = featuredPack.tracks
             featuredProgramsByTrackId = featuredPack.programsByTrackId
-            _featuredTracks.value = featured
-            _featuredPackMetadata.value = featuredPack.metadata
+        _featuredTracks.value = featured
+        refreshFeaturedJourney()
+        _featuredPackMetadata.value = featuredPack.metadata
             when (val result = musicRepository.loadTracks()) {
                 is LibraryLoadResult.Success -> {
                     updateTracks(featured, result.tracks)
@@ -515,6 +533,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun playFeaturedTracks() {
         val featuredQueue = _featuredTracks.value
         if (featuredQueue.isEmpty()) return
+        setQueue(featuredQueue, featuredQueue.first(), shouldPlay = true)
+    }
+
+    fun continueFeaturedJourney() {
+        val featuredQueue = _featuredTracks.value
+        val nextTrack = _featuredJourney.value.nextTrack ?: featuredQueue.firstOrNull() ?: return
+        setQueue(featuredQueue, nextTrack, shouldPlay = true)
+    }
+
+    fun restartFeaturedJourney() {
+        val featuredQueue = _featuredTracks.value
+        if (featuredQueue.isEmpty()) return
+        // 先刷新内存状态，避免首页在 DataStore 流回写前短暂保留“已完成”。
+        completedFeaturedTrackIds = emptySet()
+        refreshFeaturedJourney()
+        viewModelScope.launch { preferencesRepository.clearFeaturedJourneyProgress() }
         setQueue(featuredQueue, featuredQueue.first(), shouldPlay = true)
     }
 
@@ -907,6 +941,17 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         _playbackHistory.value = playbackHistoryIds.mapNotNull(trackIndex::get)
     }
 
+    private fun refreshFeaturedJourney() {
+        val featured = _featuredTracks.value
+        val completed = completedFeaturedTrackIds.intersect(featured.map(Track::id).toSet())
+        _featuredJourney.value = FeaturedJourneyState(
+            completedCount = completed.size,
+            totalCount = featured.size,
+            nextTrack = featured.firstOrNull { it.id !in completed },
+            isComplete = featured.isNotEmpty() && completed.size == featured.size
+        )
+    }
+
     private fun refreshBookmarks() {
         val resolved = savedBookmarks.mapNotNull { bookmark ->
             trackIndex[bookmark.trackId]?.let { track -> BookmarkItem(bookmark, track) }
@@ -1220,6 +1265,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 0f
             }
+            val currentTrack = _currentTrack.value
+            if (
+                currentTrack?.isFeaturedAsset == true &&
+                duration > 0L &&
+                boundedPosition >= duration - FEATURED_COMPLETION_TOLERANCE_MS &&
+                currentTrack.id !in completedFeaturedTrackIds
+            ) {
+                // 在持久化前即时更新，避免进度轮询在 DataStore 发射前重复排队写入同一曲目。
+                completedFeaturedTrackIds = completedFeaturedTrackIds + currentTrack.id
+                refreshFeaturedJourney()
+                viewModelScope.launch { preferencesRepository.markFeaturedTrackCompleted(currentTrack.id) }
+            }
             persistResumeState(forcePersist)
         }
     }
@@ -1323,5 +1380,6 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         const val SLEEP_TIMER_TICK_MS = 1_000L
         const val MAX_SLEEP_TIMER_MINUTES = 180
         const val MIN_VALID_DURATION_MS = 1_000L
+        const val FEATURED_COMPLETION_TOLERANCE_MS = 2_000L
     }
 }
