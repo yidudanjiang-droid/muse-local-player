@@ -634,7 +634,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             pendingTrack = track
             return
         }
-        val queueToPlay = _queue.value.ifEmpty { queueForTrack(track) }
+        val queueToPlay = if (track.isFeaturedAsset) queueForTrack(track) else _queue.value.ifEmpty { queueForTrack(track) }
         if (queueToPlay.none { it.id == track.id }) {
             setQueue(queueToPlay + track, track, shouldPlay = true)
             return
@@ -682,6 +682,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             "正在播放专题节目《${track.title}》。"
         }
         playTrackAtPosition(track, safePosition, feedback)
+    }
+
+    /** Switches to a topic first, then restores that topic's independent journey state. */
+    fun continueFeaturedTopicJourney(topicId: String) {
+        if (_activeFeaturedTopicId.value != topicId) selectFeaturedTopic(topicId)
+        continueFeaturedJourney()
     }
 
     fun continueFeaturedJourney() {
@@ -1090,6 +1096,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun playTrackAtPosition(track: Track, positionMs: Long, feedback: String) {
+        track.featuredTopicId?.let { topicId ->
+            if (_activeFeaturedTopicId.value != topicId) selectFeaturedTopic(topicId)
+        }
         failedTrackIds.remove(track.id)
         val activeController = controller ?: run {
             pendingBookmark = BookmarkItem(
@@ -1098,7 +1107,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             )
             return
         }
-        val queueToPlay = _queue.value.ifEmpty { queueForTrack(track) }
+        val queueToPlay = if (track.isFeaturedAsset) queueForTrack(track) else _queue.value.ifEmpty { queueForTrack(track) }
         val targetQueue = if (queueToPlay.any { it.id == track.id }) queueToPlay else queueToPlay + track
         val targetIndex = targetQueue.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
         if (activeController.currentMediaItem?.mediaId == track.id.toString()) {
@@ -1545,7 +1554,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         allFeaturedTracks = allFeaturedTracks.map { if (it.id == trackId) updated else it }
         _featuredTopics.value = _featuredTopics.value.map { topic ->
             if (topic.tracks.none { it.id == trackId }) topic
-            else topic.copy(tracks = topic.tracks.map { if (it.id == trackId) updated else it })
+            else {
+                val updatedTopicTracks = topic.tracks.map { if (it.id == trackId) updated else it }
+                topic.copy(
+                    tracks = updatedTopicTracks,
+                    health = topic.health.copy(
+                        resolvedDurationCount = updatedTopicTracks.count { it.durationMs > 0L }
+                    )
+                )
+            }
         }
         featuredTopicsById = _featuredTopics.value.associateBy(FeaturedAudioPack::id)
         _featuredTracks.value = _featuredTracks.value.map { if (it.id == trackId) updated else it }

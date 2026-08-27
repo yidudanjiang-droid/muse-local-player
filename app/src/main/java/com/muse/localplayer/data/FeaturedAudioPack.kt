@@ -14,8 +14,23 @@ data class FeaturedAudioPack(
     val rootAssetPath: String = "featured_audio",
     val metadata: FeaturedPackMetadata = FeaturedPackMetadata(),
     val tracks: List<Track> = emptyList(),
-    val programsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap()
+    val programsByTrackId: Map<Long, FeaturedTrackProgram> = emptyMap(),
+    /** Publisher-facing, local-only content summary calculated during the asset scan. */
+    val health: FeaturedTopicHealth = FeaturedTopicHealth()
 )
+
+data class FeaturedTopicHealth(
+    val trackCount: Int = 0,
+    val resolvedDurationCount: Int = 0,
+    val chapterCount: Int = 0,
+    val noteCount: Int = 0,
+    val hasCustomCover: Boolean = false,
+    val hasPackConfiguration: Boolean = false,
+    val hasExplicitStableId: Boolean = false
+) {
+    val contentSummary: String
+        get() = "$trackCount 首音频 · $resolvedDurationCount 首已识别时长 · $chapterCount 个章节"
+}
 
 /** Optional, publisher-authored context for one featured asset. */
 data class FeaturedTrackProgram(

@@ -12,6 +12,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -139,6 +140,7 @@ import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedTopicHealth
 import com.muse.localplayer.data.FeaturedTopicProgress
 import com.muse.localplayer.data.FeaturedAudioPack
 import com.muse.localplayer.data.FeaturedChapter
@@ -419,6 +421,7 @@ fun MuseMusicApp(
                     onPlay = viewModel::play,
                     onPlayContentSearchResult = viewModel::playSearchResult,
                     onContinueFeaturedJourney = viewModel::continueFeaturedJourney,
+                    onContinueFeaturedTopicJourney = viewModel::continueFeaturedTopicJourney,
                     onRestartFeaturedJourney = viewModel::restartFeaturedJourney,
                     onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                     onSelectFeaturedTopic = viewModel::selectFeaturedTopic,
@@ -480,6 +483,7 @@ fun MuseMusicApp(
                             onPlay = viewModel::play,
                             onPlayContentSearchResult = viewModel::playSearchResult,
                             onContinueFeaturedJourney = viewModel::continueFeaturedJourney,
+                            onContinueFeaturedTopicJourney = viewModel::continueFeaturedTopicJourney,
                             onRestartFeaturedJourney = viewModel::restartFeaturedJourney,
                             onPlayFeaturedTracks = viewModel::playFeaturedTracks,
                             onSelectFeaturedTopic = viewModel::selectFeaturedTopic,
@@ -765,6 +769,7 @@ internal fun HomeScreen(
     onRescan: () -> Unit,
     onPlay: (Track) -> Unit,
     onContinueFeaturedJourney: () -> Unit,
+    onContinueFeaturedTopicJourney: (String) -> Unit,
     onRestartFeaturedJourney: () -> Unit,
     onPlayFeaturedTracks: () -> Unit,
     onSelectFeaturedTopic: (String) -> Unit,
@@ -804,6 +809,14 @@ internal fun HomeScreen(
                     progressByTopicId = featuredTopicProgresses,
                     onSelect = onSelectFeaturedTopic
                 )
+            }
+            val resumableTopics = featuredTopics.mapNotNull { topic ->
+                val resume = featuredTopicProgresses[topic.id]?.resumeState ?: return@mapNotNull null
+                val track = resume.trackId?.let { trackId -> topic.tracks.firstOrNull { it.id == trackId } } ?: return@mapNotNull null
+                if (topic.id == activeFeaturedTopicId) null else TopicResumeItem(topic, track, resume.positionMs)
+            }
+            if (resumableTopics.isNotEmpty()) {
+                item { FeaturedTopicResumeShelf(resumableTopics, onContinueFeaturedTopicJourney) }
             }
         }
         item {
@@ -922,6 +935,50 @@ private fun BookmarkListItem(
                 )
             }
             TextButton(onClick = onRemove) { Text("移除") }
+        }
+    }
+}
+
+private data class TopicResumeItem(
+    val topic: FeaturedAudioPack,
+    val track: Track,
+    val positionMs: Long
+)
+
+@Composable
+private fun FeaturedTopicResumeShelf(
+    items: List<TopicResumeItem>,
+    onContinue: (String) -> Unit
+) {
+    Column {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("跨专题继续", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Text("${items.size} 期未听完", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text("切换专题后，会在原来的断点继续完整节目单。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(items, key = { "resume_${it.topic.id}" }) { item ->
+                Card(
+                    onClick = { onContinue(item.topic.id) },
+                    modifier = Modifier.width(248.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(item.topic.metadata.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onTertiaryContainer)
+                        Spacer(Modifier.height(7.dp))
+                        Text(item.track.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onTertiaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(5.dp))
+                        Text(
+                            "从 ${formatTime(item.positionMs)} 继续",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.78f)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -1252,6 +1309,8 @@ private fun FeaturedTopicSheet(
     val hasPrograms = chapterCount > 0 || programsByTrackId.values.any(FeaturedTrackProgram::hasContent)
     val resumeTrack = journey.resumeTrack
     val nextTrack = journey.nextTrack
+    val topicHealth = topics.firstOrNull { it.id == activeTopicId }?.health
+        ?: FeaturedTopicHealth(trackCount = tracks.size, resolvedDurationCount = tracks.count { it.durationMs > 0L })
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1321,6 +1380,7 @@ private fun FeaturedTopicSheet(
                         FeaturedTopicStat("章节", chapterCount.toString(), Modifier.weight(1f))
                     }
                 }
+                item { FeaturedTopicProductionSummary(topicHealth) }
                 if (tracks.isEmpty()) {
                     item { EmptyFeaturedAudioCard(metadata) }
                 } else {
@@ -1415,6 +1475,44 @@ private fun FeaturedTopicSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FeaturedTopicProductionSummary(health: FeaturedTopicHealth) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.09f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Info, contentDescription = null, tint = Color(0xFFC6D8FF), modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("内容摘要", style = MaterialTheme.typography.titleSmall, color = Color.White)
+            }
+            Spacer(Modifier.height(7.dp))
+            Text(health.contentSummary, style = MaterialTheme.typography.bodyMedium, color = Color(0xFFD6E1F6))
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                FeaturedTopicHealthToken(if (health.hasPackConfiguration) "已读取 pack.json" else "使用默认元数据")
+                FeaturedTopicHealthToken(if (health.hasExplicitStableId) "已固定专题 ID" else "使用目录 ID")
+                FeaturedTopicHealthToken(if (health.hasCustomCover) "已配置专题封面" else "使用 Muse 默认封面")
+                if (health.noteCount > 0) FeaturedTopicHealthToken("${health.noteCount} 条节目笔记")
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedTopicHealthToken(text: String) {
+    Surface(shape = MaterialTheme.shapes.small, color = Color.White.copy(alpha = 0.12f)) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFE0E9FF)
+        )
     }
 }
 

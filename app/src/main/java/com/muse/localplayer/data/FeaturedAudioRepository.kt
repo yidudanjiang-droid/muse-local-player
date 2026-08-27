@@ -41,7 +41,7 @@ class FeaturedAudioRepository(private val context: Context) {
 
     private fun loadPackFromRoot(rootAssetPath: String): FeaturedAudioPack {
         val configuration = readPackConfiguration(rootAssetPath)
-        val artworkUri = featuredArtworkUri(configuration.metadata, rootAssetPath)
+        val artwork = featuredArtwork(configuration.metadata, rootAssetPath)
         val entries = listAudioAssetPaths(rootAssetPath)
             .mapNotNull { assetPath ->
                 // A bad second-packaged file must never make the remaining topic disappear.
@@ -51,7 +51,7 @@ class FeaturedAudioRepository(private val context: Context) {
                         packId = configuration.id,
                         pack = configuration.metadata,
                         override = override,
-                        artworkUri = artworkUri
+                        artworkUri = artwork.uri
                     )
                 }.getOrNull()
             }
@@ -71,7 +71,16 @@ class FeaturedAudioRepository(private val context: Context) {
             rootAssetPath = rootAssetPath,
             metadata = configuration.metadata,
             tracks = tracks,
-            programsByTrackId = programsByTrackId
+            programsByTrackId = programsByTrackId,
+            health = FeaturedTopicHealth(
+                trackCount = tracks.size,
+                resolvedDurationCount = tracks.count { it.durationMs > 0L },
+                chapterCount = programsByTrackId.values.sumOf { it.chapters.size },
+                noteCount = programsByTrackId.values.sumOf { it.notes.size },
+                hasCustomCover = artwork.isCustom,
+                hasPackConfiguration = configuration.hasPackConfiguration,
+                hasExplicitStableId = configuration.hasExplicitStableId
+            )
         )
     }
 
@@ -98,8 +107,11 @@ class FeaturedAudioRepository(private val context: Context) {
         return runCatching {
             val rawJson = context.assets.open("$rootAssetPath/$PACK_FILE_NAME").bufferedReader().use { it.readText() }
             val json = JSONObject(rawJson)
+            val explicitId = json.optionalText("id")
             PackConfiguration(
-                id = json.optionalText("id")?.normalizeTopicId()?.ifBlank { fallbackId } ?: fallbackId,
+                id = explicitId?.normalizeTopicId()?.ifBlank { fallbackId } ?: fallbackId,
+                hasPackConfiguration = true,
+                hasExplicitStableId = explicitId != null,
                 metadata = FeaturedPackMetadata(
                     title = json.textOrDefault("title", DEFAULT_TITLE),
                     eyebrow = json.textOrDefault("eyebrow", DEFAULT_EYEBROW),
@@ -347,10 +359,13 @@ class FeaturedAudioRepository(private val context: Context) {
     private fun MediaMetadataRetriever.text(key: Int): String? =
         extractMetadata(key)?.trim()?.takeUnless { it.isBlank() || it.equals("<unknown>", true) }
 
-    private fun featuredArtworkUri(pack: FeaturedPackMetadata, rootAssetPath: String): Uri {
+    private fun featuredArtwork(pack: FeaturedPackMetadata, rootAssetPath: String): ResolvedArtwork {
         val configuredPath = resolveCoverAssetPath(pack.coverAssetPath, rootAssetPath)
-        return configuredPath?.let { Uri.parse("file:///android_asset/$it") }
-            ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.muse_featured_hero}")
+        return ResolvedArtwork(
+            uri = configuredPath?.let { Uri.parse("file:///android_asset/$it") }
+                ?: Uri.parse("android.resource://${context.packageName}/${R.drawable.muse_featured_hero}"),
+            isCustom = configuredPath != null
+        )
     }
 
     private fun resolveCoverAssetPath(rawPath: String?, rootAssetPath: String): String? {
@@ -372,10 +387,17 @@ class FeaturedAudioRepository(private val context: Context) {
     private fun assetExists(path: String): Boolean =
         runCatching { context.assets.open(path).close() }.isSuccess
 
+    private data class ResolvedArtwork(
+        val uri: Uri,
+        val isCustom: Boolean
+    )
+
     private data class PackConfiguration(
         val id: String = DEFAULT_TOPIC_ID,
         val metadata: FeaturedPackMetadata = FeaturedPackMetadata(),
-        val trackOverrides: Map<String, TrackOverride> = emptyMap()
+        val trackOverrides: Map<String, TrackOverride> = emptyMap(),
+        val hasPackConfiguration: Boolean = false,
+        val hasExplicitStableId: Boolean = false
     )
 
     private data class TrackOverride(
