@@ -3,23 +3,32 @@ package com.muse.localplayer.data
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Reads optional, user-maintained LRC sidecar files packaged next to featured audio assets.
  * No lyrics are fetched or inferred: an absent or malformed file simply produces an empty timeline.
  */
 class LyricsRepository(private val context: Context) {
+    private val featuredLyricCache = ConcurrentHashMap<String, List<LyricLine>>()
+
     suspend fun loadFeaturedLyrics(track: Track): List<LyricLine> = withContext(Dispatchers.IO) {
         if (!track.isFeaturedAsset) return@withContext emptyList()
         val assetPath = track.uri.path
             ?.removePrefix("/")
             ?.takeIf { it.isNotBlank() }
             ?: return@withContext emptyList()
+        featuredLyricCache[assetPath] ?: loadLyricsFromAsset(assetPath).also { lines ->
+            featuredLyricCache.putIfAbsent(assetPath, lines)
+        }
+    }
+
+    private fun loadLyricsFromAsset(assetPath: String): List<LyricLine> {
         val lyricPath = assetPath.substringBeforeLast('.', assetPath) + LRC_EXTENSION
         val content = runCatching {
             context.assets.open(lyricPath).bufferedReader(Charsets.UTF_8).use { it.readText() }
-        }.getOrNull() ?: return@withContext emptyList()
-        parseLrc(content)
+        }.getOrNull() ?: return emptyList()
+        return parseLrc(content)
     }
 
     internal fun parseLrc(content: String): List<LyricLine> {

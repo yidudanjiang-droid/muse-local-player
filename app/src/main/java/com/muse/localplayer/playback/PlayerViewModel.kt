@@ -1190,12 +1190,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         if (query.isBlank()) return emptyList()
         val results = mutableListOf<ContentSearchResult>()
         _tracks.value.forEach { track ->
-            if (matchesQuery(query, track.title, track.artist, track.album)) {
+            if (matchesQuery(query, track.title, track.artist, track.album, topicTitleFor(track))) {
                 results += ContentSearchResult(
                     kind = ContentSearchKind.TRACK,
                     track = track,
                     title = track.title,
-                    supportingText = "${track.artist} · ${track.album}"
+                    supportingText = listOfNotNull(topicTitleFor(track), track.artist, track.album).joinToString(" · ")
                 )
             }
         }
@@ -1207,7 +1207,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         kind = ContentSearchKind.CHAPTER,
                         track = track,
                         title = chapter.title,
-                        supportingText = "章节 · ${track.title} · ${formatTimestamp(chapter.timestampMs)}",
+                        supportingText = listOfNotNull(topicTitleFor(track), "章节", track.title, formatTimestamp(chapter.timestampMs)).joinToString(" · "),
                         positionMs = chapter.timestampMs
                     )
                 }
@@ -1217,11 +1217,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         kind = ContentSearchKind.NOTE,
                         track = track,
                         title = note,
-                        supportingText = "节目笔记 · ${track.title}"
+                        supportingText = listOfNotNull(topicTitleFor(track), "节目笔记", track.title).joinToString(" · ")
                     )
                 }
         }
-        _featuredTracks.value.forEach { track ->
+        allFeaturedTracks.forEach { track ->
             lyricsRepository.loadFeaturedLyrics(track)
                 .filter { line -> matchesQuery(query, line.text, track.title) }
                 .forEach { line ->
@@ -1229,7 +1229,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                         kind = ContentSearchKind.LYRIC,
                         track = track,
                         title = line.text,
-                        supportingText = "歌词 · ${track.title} · ${formatTimestamp(line.timestampMs)}",
+                        supportingText = listOfNotNull(topicTitleFor(track), "歌词", track.title, formatTimestamp(line.timestampMs)).joinToString(" · "),
                         positionMs = line.timestampMs
                     )
                 }
@@ -1252,8 +1252,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             .take(80)
     }
 
-    private fun matchesQuery(query: String, vararg candidates: String): Boolean =
-        candidates.any { it.contains(query, ignoreCase = true) }
+    private fun topicTitleFor(track: Track): String? =
+        track.featuredTopicId?.let { topicId -> featuredTopicsById[topicId]?.metadata?.title }
+
+    private fun matchesQuery(query: String, vararg candidates: String?): Boolean =
+        candidates.any { candidate -> candidate?.contains(query, ignoreCase = true) == true }
 
     private fun clearSleepAfterCurrentTrack() {
         if (_sleepAfterCurrentTrackId.value == null) return
