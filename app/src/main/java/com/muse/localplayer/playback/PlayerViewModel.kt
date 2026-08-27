@@ -144,6 +144,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private val _sleepTimerRemainingMs = MutableStateFlow(0L)
     val sleepTimerRemainingMs = _sleepTimerRemainingMs.asStateFlow()
 
+    private val _sleepAfterCurrentTrackId = MutableStateFlow<Long?>(null)
+    val sleepAfterCurrentTrackId = _sleepAfterCurrentTrackId.asStateFlow()
+
     private val _mixingPlaybackEnabled = MutableStateFlow(false)
     val mixingPlaybackEnabled = _mixingPlaybackEnabled.asStateFlow()
 
@@ -224,6 +227,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            val completedTrackId = _currentTrack.value?.id
+            val sleepTargetId = _sleepAfterCurrentTrackId.value
+            if (sleepTargetId != null && completedTrackId == sleepTargetId) {
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                    controller?.pause()
+                    _playerMessage.value = PlayerFeedback("本曲已播放完，已按设置暂停。")
+                }
+                clearSleepAfterCurrentTrack()
+            }
             resetTimelineFor(mediaItem)
             syncCurrentTrack(mediaItem)
             mediaItem?.mediaId?.toLongOrNull()?.let(::recordPlayback)
@@ -251,6 +263,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (
+                playbackState == Player.STATE_ENDED &&
+                _currentTrack.value?.id == _sleepAfterCurrentTrackId.value
+            ) {
+                clearSleepAfterCurrentTrack()
+                _playerMessage.value = PlayerFeedback("本曲已播放完，已按设置暂停。")
+            }
             // 成功播放下一首不应遗忘本轮已失败文件；否则随机/循环可能再次跳回坏文件。
             refreshPlaybackState()
         }
@@ -363,6 +382,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             preferencesRepository.featuredJourneyResumeState.collect { savedResumeState ->
                 featuredJourneyResumeState = savedResumeState
                 refreshFeaturedJourney()
+            }
+        }
+        viewModelScope.launch {
+            preferencesRepository.sleepAfterCurrentTrackId.collect { targetId ->
+                _sleepAfterCurrentTrackId.value = targetId
             }
         }
         viewModelScope.launch {
@@ -878,6 +902,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch { preferencesRepository.saveSleepTimerEndEpochMs(0L) }
     }
 
+    fun setSleepAfterCurrentTrack(enabled: Boolean) {
+        val targetId = if (enabled) _currentTrack.value?.id else null
+        _sleepAfterCurrentTrackId.value = targetId
+        viewModelScope.launch { preferencesRepository.saveSleepAfterCurrentTrackId(targetId) }
+    }
+
     fun clearPlaybackHistory() {
         viewModelScope.launch { preferencesRepository.clearPlaybackHistory() }
     }
@@ -1071,6 +1101,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun matchesQuery(query: String, vararg candidates: String): Boolean =
         candidates.any { it.contains(query, ignoreCase = true) }
+
+    private fun clearSleepAfterCurrentTrack() {
+        if (_sleepAfterCurrentTrackId.value == null) return
+        _sleepAfterCurrentTrackId.value = null
+        viewModelScope.launch { preferencesRepository.saveSleepAfterCurrentTrackId(null) }
+    }
 
     private fun scheduleSleepTimer(endEpochMs: Long) {
         sleepTimerJob?.cancel()

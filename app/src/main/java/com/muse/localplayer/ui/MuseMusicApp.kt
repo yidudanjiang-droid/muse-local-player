@@ -173,6 +173,7 @@ fun MuseMusicApp(
     val bookmarks by viewModel.bookmarkItems.collectAsStateWithLifecycle()
     val recentlyAdded by viewModel.recentlyAdded.collectAsStateWithLifecycle()
     val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsStateWithLifecycle()
+    val sleepAfterCurrentTrackId by viewModel.sleepAfterCurrentTrackId.collectAsStateWithLifecycle()
     val playerMessage by viewModel.playerMessage.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(initialValue = androidx.compose.material3.DrawerValue.Closed)
@@ -518,6 +519,7 @@ fun MuseMusicApp(
             mixingPlaybackEnabled = mixingPlaybackEnabled,
             fadeTransitionsEnabled = fadeTransitionsEnabled,
             sleepTimerRemainingMs = sleepTimerRemainingMs,
+            sleepAfterCurrentTrackEnabled = sleepAfterCurrentTrackId == currentTrack!!.id,
             isFavorite = currentTrack!!.id in favoriteIds,
             onDismiss = { playerOpen = false },
             onToggle = viewModel::togglePlayback,
@@ -532,6 +534,7 @@ fun MuseMusicApp(
             onSetFadeTransitions = viewModel::setFadeTransitionsEnabled,
             onSetSleepTimer = viewModel::setSleepTimer,
             onCancelSleepTimer = viewModel::cancelSleepTimer,
+            onSetSleepAfterCurrentTrack = viewModel::setSleepAfterCurrentTrack,
             onAddBookmark = viewModel::addBookmark,
             onToggleFavorite = { viewModel.toggleFavorite(currentTrack!!) },
             onOpenQueue = {
@@ -1800,6 +1803,7 @@ private fun PlayerSheetWithProgress(
     mixingPlaybackEnabled: Boolean,
     fadeTransitionsEnabled: Boolean,
     sleepTimerRemainingMs: Long,
+    sleepAfterCurrentTrackEnabled: Boolean,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1812,6 +1816,7 @@ private fun PlayerSheetWithProgress(
     onSetFadeTransitions: (Boolean) -> Unit,
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
+    onSetSleepAfterCurrentTrack: (Boolean) -> Unit,
     onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
@@ -1837,6 +1842,7 @@ private fun PlayerSheetWithProgress(
         mixingPlaybackEnabled = mixingPlaybackEnabled,
         fadeTransitionsEnabled = fadeTransitionsEnabled,
         sleepTimerRemainingMs = sleepTimerRemainingMs,
+        sleepAfterCurrentTrackEnabled = sleepAfterCurrentTrackEnabled,
         isFavorite = isFavorite,
         onDismiss = onDismiss,
         onToggle = onToggle,
@@ -1849,6 +1855,7 @@ private fun PlayerSheetWithProgress(
         onSetFadeTransitions = onSetFadeTransitions,
         onSetSleepTimer = onSetSleepTimer,
         onCancelSleepTimer = onCancelSleepTimer,
+        onSetSleepAfterCurrentTrack = onSetSleepAfterCurrentTrack,
         onAddBookmark = onAddBookmark,
         onToggleFavorite = onToggleFavorite,
         onOpenQueue = onOpenQueue
@@ -1872,6 +1879,7 @@ private fun PlayerSheet(
     mixingPlaybackEnabled: Boolean,
     fadeTransitionsEnabled: Boolean,
     sleepTimerRemainingMs: Long,
+    sleepAfterCurrentTrackEnabled: Boolean,
     isFavorite: Boolean,
     onDismiss: () -> Unit,
     onToggle: () -> Unit,
@@ -1884,6 +1892,7 @@ private fun PlayerSheet(
     onSetFadeTransitions: (Boolean) -> Unit,
     onSetSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
+    onSetSleepAfterCurrentTrack: (Boolean) -> Unit,
     onAddBookmark: () -> Boolean,
     onToggleFavorite: () -> Unit,
     onOpenQueue: () -> Unit
@@ -2135,7 +2144,12 @@ private fun PlayerSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("睡眠定时", style = MaterialTheme.typography.titleSmall)
                     Text(
-                        if (sleepTimerRemainingMs > 0L) "将在 ${formatTime(sleepTimerRemainingMs)} 后平滑暂停" else "未设置自动暂停",
+                        when {
+                            sleepTimerRemainingMs > 0L && sleepAfterCurrentTrackEnabled -> "将在 ${formatTime(sleepTimerRemainingMs)} 后，或本曲结束时平滑暂停"
+                            sleepTimerRemainingMs > 0L -> "将在 ${formatTime(sleepTimerRemainingMs)} 后平滑暂停"
+                            sleepAfterCurrentTrackEnabled -> "已设置本曲结束后平滑暂停"
+                            else -> "未设置自动暂停"
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         color = Color(0xFFD6E1F6)
                     )
@@ -2148,6 +2162,15 @@ private fun PlayerSheet(
                 listOf(15, 30, 60).forEach { minutes ->
                     AssistChip(onClick = { onSetSleepTimer(minutes) }, label = { Text("${minutes} 分钟") })
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            FilledTonalButton(
+                onClick = { onSetSleepAfterCurrentTrack(!sleepAfterCurrentTrackEnabled) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Pause, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (sleepAfterCurrentTrackEnabled) "本曲结束后暂停：已开启" else "本曲结束后暂停")
             }
             Spacer(Modifier.height(12.dp))
             Text(

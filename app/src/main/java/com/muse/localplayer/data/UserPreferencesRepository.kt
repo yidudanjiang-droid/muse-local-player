@@ -94,6 +94,10 @@ class UserPreferencesRepository(private val context: Context) {
         preferences[KEY_SLEEP_TIMER_END_EPOCH_MS] ?: 0L
     }
 
+    val sleepAfterCurrentTrackId: Flow<Long?> = preferences.map { preferences ->
+        preferences[KEY_SLEEP_AFTER_CURRENT_TRACK_ID]
+    }
+
     val playbackResumeState: Flow<PlaybackResumeState> = preferences.map { preferences ->
         PlaybackResumeState(
             trackId = preferences[KEY_RESUME_TRACK_ID],
@@ -204,6 +208,13 @@ class UserPreferencesRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveSleepAfterCurrentTrackId(trackId: Long?) {
+        context.musePreferences.edit { preferences ->
+            if (trackId == null) preferences.remove(KEY_SLEEP_AFTER_CURRENT_TRACK_ID)
+            else preferences[KEY_SLEEP_AFTER_CURRENT_TRACK_ID] = trackId
+        }
+    }
+
     suspend fun savePlaybackResumeState(trackId: Long?, positionMs: Long) {
         context.musePreferences.edit { preferences ->
             if (trackId == null) {
@@ -273,6 +284,7 @@ class UserPreferencesRepository(private val context: Context) {
         private val KEY_FEATURED_JOURNEY_RESUME_TRACK_ID = longPreferencesKey("featured_journey_resume_track_id")
         private val KEY_FEATURED_JOURNEY_RESUME_POSITION_MS = longPreferencesKey("featured_journey_resume_position_ms")
         private val KEY_SLEEP_TIMER_END_EPOCH_MS = longPreferencesKey("sleep_timer_end_epoch_ms")
+        private val KEY_SLEEP_AFTER_CURRENT_TRACK_ID = longPreferencesKey("sleep_after_current_track_id")
         private val KEY_RESUME_TRACK_ID = longPreferencesKey("resume_track_id")
         private val KEY_RESUME_POSITION_MS = longPreferencesKey("resume_position_ms")
         private val KEY_PLAYBACK_BOOKMARKS = stringPreferencesKey("playback_bookmarks")
