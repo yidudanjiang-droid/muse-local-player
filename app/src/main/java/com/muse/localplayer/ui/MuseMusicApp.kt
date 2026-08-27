@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -113,6 +114,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -132,6 +134,7 @@ import com.muse.localplayer.R
 import com.muse.localplayer.data.Album
 import com.muse.localplayer.data.ContentSearchResult
 import com.muse.localplayer.data.FeaturedPackMetadata
+import com.muse.localplayer.data.FeaturedChapter
 import com.muse.localplayer.data.ChapterPlaybackState
 import com.muse.localplayer.data.chapterPlaybackState
 import com.muse.localplayer.data.FeaturedTrackProgram
@@ -2047,6 +2050,14 @@ private fun PlayerSheet(
                     )
                 }
             }
+            if (program?.chapters?.isNotEmpty() == true && durationMs > 0L) {
+                Spacer(Modifier.height(8.dp))
+                ChapterTimelineMarkers(
+                    chapters = program.chapters,
+                    positionMs = positionMs,
+                    durationMs = durationMs
+                )
+            }
             if (durationMs > 0L) {
                 Spacer(Modifier.height(12.dp))
                 Text("A-B 片段循环", style = MaterialTheme.typography.titleSmall, modifier = Modifier.fillMaxWidth())
@@ -2223,6 +2234,39 @@ private fun PlayerSheet(
                 color = Color(0xFFD6E1F6)
             )
             }
+        }
+    }
+}
+
+@Composable
+private fun ChapterTimelineMarkers(
+    chapters: List<FeaturedChapter>,
+    positionMs: Long,
+    durationMs: Long
+) {
+    if (durationMs <= 0L || chapters.isEmpty()) return
+    val completedColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
+    val pendingColor = Color(0xFFB6C6E9).copy(alpha = 0.58f)
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(12.dp)
+    ) {
+        val lineY = size.height / 2f
+        drawLine(
+            color = pendingColor.copy(alpha = 0.4f),
+            start = Offset(0f, lineY),
+            end = Offset(size.width, lineY),
+            strokeWidth = 1.dp.toPx()
+        )
+        chapters.forEach { chapter ->
+            val fraction = (chapter.timestampMs.toDouble() / durationMs.toDouble()).toFloat().coerceIn(0f, 1f)
+            val isReached = chapter.timestampMs <= positionMs
+            drawCircle(
+                color = if (isReached) completedColor else pendingColor,
+                radius = if (isReached) 3.dp.toPx() else 2.dp.toPx(),
+                center = Offset(size.width * fraction, lineY)
+            )
         }
     }
 }
