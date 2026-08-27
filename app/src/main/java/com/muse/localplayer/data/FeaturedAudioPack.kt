@@ -24,6 +24,7 @@ data class ChapterPlaybackState(
     val activeChapter: FeaturedChapter?,
     val activeIndex: Int,
     val completedCount: Int,
+    val previousChapter: FeaturedChapter?,
     val nextChapter: FeaturedChapter?,
     val chapterProgress: Float,
     val remainingInChapterMs: Long?
@@ -36,6 +37,7 @@ fun FeaturedTrackProgram.chapterPlaybackState(positionMs: Long, durationMs: Long
     val position = positionMs.coerceAtLeast(0L)
     val activeIndex = chapters.indexOfLast { it.timestampMs <= position }
     val activeChapter = chapters.getOrNull(activeIndex)
+    val previousChapter = chapters.getOrNull(activeIndex - 1)
     val nextChapter = chapters.getOrNull(activeIndex + 1)
     val chapterEndMs = nextChapter?.timestampMs
         ?: durationMs.takeIf { it > (activeChapter?.timestampMs ?: 0L) }
@@ -47,6 +49,7 @@ fun FeaturedTrackProgram.chapterPlaybackState(positionMs: Long, durationMs: Long
         activeChapter = activeChapter,
         activeIndex = activeIndex,
         completedCount = activeIndex.coerceAtLeast(0),
+        previousChapter = previousChapter,
         nextChapter = nextChapter,
         chapterProgress = chapterProgress,
         remainingInChapterMs = chapterEndMs?.minus(position)?.coerceAtLeast(0L)

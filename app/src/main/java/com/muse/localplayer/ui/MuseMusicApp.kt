@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
@@ -1949,7 +1950,12 @@ private fun PlayerSheet(
                 Spacer(Modifier.height(14.dp))
                 ChapterFlowCard(
                     state = program.chapterPlaybackState(positionMs = positionMs, durationMs = durationMs),
-                    chapterCount = program.chapters.size
+                    chapterCount = program.chapters.size,
+                    onChapterSelect = { timestampMs ->
+                        if (durationMs > 0L) {
+                            onSeek((timestampMs.toDouble() / durationMs.toDouble()).toFloat().coerceIn(0f, 1f))
+                        }
+                    }
                 )
             }
             if (program?.hasContent == true) {
@@ -2081,7 +2087,11 @@ private fun PlayerSheet(
 }
 
 @Composable
-private fun ChapterFlowCard(state: ChapterPlaybackState, chapterCount: Int) {
+private fun ChapterFlowCard(
+    state: ChapterPlaybackState,
+    chapterCount: Int,
+    onChapterSelect: (Long) -> Unit
+) {
     val active = state.activeChapter
     val next = state.nextChapter
     Surface(
@@ -2116,6 +2126,32 @@ private fun ChapterFlowCard(state: ChapterPlaybackState, chapterCount: Int) {
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = Color(0x454E5F86)
                 )
+            }
+            if (active != null || next != null) {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    AssistChip(
+                        onClick = { state.previousChapter?.let { onChapterSelect(it.timestampMs) } },
+                        enabled = state.previousChapter != null,
+                        label = { Text("上一章") },
+                        leadingIcon = { Icon(Icons.Default.SkipPrevious, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    )
+                    AssistChip(
+                        onClick = { active?.let { onChapterSelect(it.timestampMs) } },
+                        enabled = active != null,
+                        label = { Text("重播本章") },
+                        leadingIcon = { Icon(Icons.Default.Replay, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    )
+                    AssistChip(
+                        onClick = { next?.let { onChapterSelect(it.timestampMs) } },
+                        enabled = next != null,
+                        label = { Text("下一章") },
+                        leadingIcon = { Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    )
+                }
             }
             Spacer(Modifier.height(6.dp))
             when {
