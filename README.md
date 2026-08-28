@@ -187,6 +187,8 @@ app/build/outputs/apk/release/app-release.apk
 
 `keystore.properties`、`release/`、`*.jks`、APK/AAB 与构建产物均已列入 `.gitignore`。详细发布检查清单见 [`docs/release.md`](docs/release.md)。
 
+源码包内附带完整文档：面向使用者的 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)、面向开发者的 [`docs/TECHNICAL_GUIDE.md`](docs/TECHNICAL_GUIDE.md)、[`docs/featured_audio_architecture.md`](docs/featured_audio_architecture.md)、专题 assets 制作契约 [`app/src/main/assets/featured_audio/README.md`](app/src/main/assets/featured_audio/README.md) 与 [`docs/release.md`](docs/release.md)。
+
 ## 开源、贡献与安全
 
 项目以 [MIT License](LICENSE) 发布。第三方归属与适配范围见 [NOTICE](NOTICE)、[`docs/open_source_review.md`](docs/open_source_review.md) 及 [`THIRD_PARTY_LICENSES`](THIRD_PARTY_LICENSES)。本项目不会复制 GPL-3.0 代码；GPL 项目仅用于功能体验研究。
